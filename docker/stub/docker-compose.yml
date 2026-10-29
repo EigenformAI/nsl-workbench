@@ -1,0 +1,6 @@
+# Test fixture only — used by tests/test_task_loader.py and tests/test_task_abc.py.
+# `docker compose config --services` parses this file to validate that
+# agent_service_name is declared. No container is ever started from this file.
+services:
+  agent:
+    image: alpine

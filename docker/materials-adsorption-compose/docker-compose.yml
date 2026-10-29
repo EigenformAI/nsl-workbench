@@ -1,0 +1,22 @@
+services:
+  agent-service:
+    image: alpine:3.20
+    command: ["sleep", "infinity"]
+  compute-service:
+    build: .
+    command: ["sleep", "infinity"]
+    network_mode: none
+    read_only: true
+    user: "65534:65534"
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 64
+    tmpfs:
+      - /tmp:rw,size=64m
+    volumes:
+      - type: bind
+        source: ./public-evidence
+        target: /data
+        read_only: true
+    x-nsl-slot-local-bind-sources: ["./public-evidence"]

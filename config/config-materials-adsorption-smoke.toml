@@ -1,0 +1,69 @@
+model_name = "llama:.model-cache/materials-base/initial.gguf"
+code_host_cache_path = "./code/materials-smoke"
+container_ids = [
+  "materials-adsorption-compose-agent-service-1",
+  "materials-adsorption-compose-compute-service-1",
+]
+dynamic_container = true
+docker_compose_dir = "./docker/materials-adsorption-compose"
+train_data_save_folder = "./data/materials-smoke/train-data"
+
+[inference]
+temperature = 0.5
+timeout = 300
+max_tokens = 4096
+
+[llama]
+startup_timeout = 2400
+n_gpu_layers = -1
+ctx_size = 65536
+cache_type_k = "q4_0"
+cache_type_v = "q4_0"
+flash_attention = true
+parallel_slots = 1
+
+[task]
+class = "tasks.materials_adsorption.task.MaterialsAdsorptionTask"
+
+[task.config]
+dataset_path = "./assets/materials-adsorption/oc20-dense-mini-v1/dataset.json"
+permutation_null_path = "./assets/materials-adsorption/oc20-dense-mini-v1/permutation-null-v4.json"
+shard_null_path = "./assets/materials-adsorption/oc20-dense-mini-v1/shard-null-v2.json"
+attainability_path = "./assets/materials-adsorption/oc20-dense-mini-v1/attainability-v2.json"
+archive_path = "./data/materials-smoke/state/archive.sqlite"
+blob_dir = "./data/materials-smoke/state/blobs"
+docker_compose_dir = "./docker/materials-adsorption-compose"
+
+[harness]
+name = "container"
+
+[harness.container]
+profile = "ms_agent"
+image = "negative-space-learning-v2/ms-agent:0.1.0"
+network_mode = "bridge"
+inference_transport = "tcp"
+max_wall_seconds = 2400
+mem_limit = "2g"
+
+[harness.container.build]
+context = "docker/ms-agent"
+
+[harness.container.profile_config]
+model = "materials-adsorption"
+max_chat_round = 24
+tool_call_timeout = 180
+transcript_tag = "episode"
+
+[generation]
+target_training_rows = 1
+max_episodes = 1
+parallel_episodes = 1
+checkpoint_every_episode = true
+resume_from_checkpoint = false
+generation_output_dir = "./data/materials-smoke/generations"
+
+[observability]
+enabled = true
+record_inference = true
+record_phases = true
+record_resources = true

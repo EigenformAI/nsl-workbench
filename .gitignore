@@ -1,0 +1,43 @@
+# Python and local environments
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+wheels/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# Runtime state, traces, and scratch
+/out/
+/logs/
+/data/
+/code/
+/models/
+/checkpoints/
+/artifacts/
+**/harness-*/
+*.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Downloaded binaries, model weights, and training caches
+/.model-cache/
+/.llama/
+*.gguf
+/unsloth_compiled_cache/
+/wandb/
+
+# Generated compute exports. Keep the reviewed empty-directory scaffold.
+/docker/materials-adsorption-compose/public-evidence/*
+!/docker/materials-adsorption-compose/public-evidence/README.md
+
+# Keep uv.lock tracked. Do not ignore lock files or CSV fixtures globally.
