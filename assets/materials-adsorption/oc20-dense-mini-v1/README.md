@@ -42,48 +42,20 @@ Changes in this example are deterministic subsampling, conversion of mapping and
 
 ## Preparation and sampling
 
-`scripts/prepare_materials_adsorption_phase0_structures.py` derives descriptors from the official initial-structure LMDB. It matches surface identities to OC20 validation metadata using adsorbate composition, Materials Project bulk ID, Miller indices, surface shift, and top/bottom identity. It maps the upstream validation categories to the four axes above.
-
-`scripts/prepare_materials_adsorption_phase0.py` joins the official mapping and target files. Systems with fewer than two available targets are excluded. Eligible system IDs are ordered by the raw SHA-256 digest of their UTF-8 string, with the ID as a tie-breaker. The first 32 systems are selected. Placements within each system are ordered by the SHA-256 digest of `system_id + NUL + config_id`, with that string as a tie-breaker. The first eight available placements are retained. This produces 248 placements, not 256, because two selected systems have fewer than eight targets.
+- [Structure preparation and descriptor formulas](../../../scripts/prepare_materials_adsorption_phase0_structures.py)
+- [Target preparation and deterministic sampling](../../../scripts/prepare_materials_adsorption_phase0.py)
 
 Targets are taken directly from the OC20Dense DFT adsorption-energy target mapping. Missing-target configurations are not included. This example does not classify the reasons those other configurations lack valid targets.
 
 The preparation scripts check the five official mapping-member MD5 checksums before loading their pickle contents. The mappings archive served during preparation has MD5 `03227241400a465d7c6e9fa7980e480c`, whereas the upstream documentation lists `c18735c405ce6ce5761432b07287d8d9`. All five extracted members match the documented member checksums. The member checks, rather than an asserted archive-wrapper match, establish that mapping input identity.
 
-### Descriptor definitions
-
-Tag 2 atoms are adsorbate atoms. Tag 1 atoms are surface atoms. All atoms with tags other than 2 form the slab. Periodic displacements are wrapped using rounded fractional coordinates in the supplied cell. A contacted surface atom has nearest adsorbate distance at most 0.25 Å above the global minimum contact distance. Heights are measured along the normal to the first two cell vectors, relative to the highest surface atom. Values are rounded to twelve decimal places.
-
-| Descriptor | Definition |
-| --- | --- |
-| `adsorbate_atom_count` | Number of adsorbate atoms |
-| `surface_atom_count` | Number of surface atoms |
-| `adsorbate_atomic_number_mean` | Mean atomic number of adsorbate atoms |
-| `minimum_contact_distance` | Minimum adsorbate–surface atom distance, in Å |
-| `mean_nearest_surface_distance` | Mean nearest-surface distance over adsorbate atoms, in Å |
-| `contact_count_2_5a` | Number of adsorbate–surface atom pairs within 2.5 Å |
-| `site_nuclearity` | Number of contacted surface atoms |
-| `adsorbate_height_min` | Minimum adsorbate height, in Å |
-| `adsorbate_height_mean` | Mean adsorbate height, in Å |
-| `adsorbate_height_span` | Maximum minus minimum adsorbate height, in Å |
-| `surface_roughness` | Population standard deviation of surface-atom heights, in Å |
-| `contact_surface_atomic_number_mean` | Mean atomic number of contacted surface atoms |
-| `contact_surface_coordination_mean` | Mean count of slab neighbors within 3.0 Å of contacted surface atoms, excluding zero-distance self pairs |
-| `surface_area` | Magnitude of the cross product of the first two cell vectors, in Å² |
-
-Descriptor formulas do not use the target energy.
-
 ## Frozen calibration references
 
-`scripts/calibrate_materials_adsorption.py` generates the stage-1 permutation reference by shuffling target energies within each system while retaining descriptors and grouping. This reference uses 100 permutations, seed 41, six accepted controls, and the nearest-rank 95th percentile of 600 statistics. Its threshold is `0.002343568457146716`.
+- [Stage-1 permutation calibration](../../../scripts/calibrate_materials_adsorption.py)
+- [Attainability calibration](../../../scripts/calibrate_materials_adsorption_attainability.py)
+- [Evidence-probe calibration](../../../scripts/calibrate_materials_adsorption_shard_null.py)
 
-The six controls are `0.0`, `-minimum_contact_distance`, `-abs(adsorbate_height_mean)`, `contact_surface_coordination_mean`, `contact_surface_coordination_mean * minimum_contact_distance`, and `2.0 * minimum_contact_distance`. The final control is checked as an affine duplicate of minimum contact. A separate `candidate_id` expression is expected to fail compilation.
-
-`scripts/calibrate_materials_adsorption_attainability.py` scores fourteen single descriptors, 91 pair products, 91 zero-safe pair ratios, and 500 unique valid random expressions using seed 41. The file contains 696 scored candidates, of which 23 pass its stage-1 signal test. These expressions are calibration inputs, not model-generated discoveries or evidence of scientific generalization.
-
-`scripts/calibrate_materials_adsorption_shard_null.py` generates the probe reference. Runtime partition `materials-evidence-shard-v2` combines the 32 source groups into eleven evidence shards of three groups. A source group is repeated to fill the final shard. The calibration pools 11 × 696 × 100 = 765,600 permuted scores. It stores nineteen quantile edges and twenty percentile-bin labels, plus 696 unpermuted gains for each shard. It does not store every pooled null sample.
-
-These references use five grouped folds, L2 regularization `0.1`, complexity coefficient `0.001`, fold seed `grouped-system-folds-v1`, and pair seed `grouped-hash-oriented-pairs-v1`. The task validates dataset, universe, registry, compiler, scorer, and partition bindings. File checksums and internal binding hashes are different: `SHA256SUMS` hashes file bytes, while runtime checks use canonical content manifests.
+Calibration expressions are not model-generated discoveries or evidence of scientific generalization. File checksums and internal binding hashes are different: `SHA256SUMS` hashes file bytes, while runtime checks use canonical content manifests.
 
 Changing descriptors, labels, sampling, alias salt, compiler behavior, or scorer settings can invalidate these references. New datasets need new compatible calibrations. The supplied shard-calibration script currently assumes 696 candidates and eleven evidence shards. Larger custom datasets require an appropriate calibration configuration or script adaptation; their scores are not interchangeable with these files.
 

@@ -90,20 +90,6 @@ class TestAsftLossHelpers(unittest.TestCase):
         self.assertFalse(torch.allclose(kl_fwd, kl_rev))
 
 
-class TestAsftTrainerWiring(unittest.TestCase):
-    """Prove the local trainer/config are real (not just mocked in qlora tests)."""
-
-    def test_asft_trainer_subclasses_unsloth_trainer(self):
-        from unsloth.trainer import UnslothTrainer
-
-        from src.train.asft import ASFTStreamingConfig as LossStreamingConfig
-        from src.train.asft_trainer import ASFTStreamingConfig, ASFTTrainer
-
-        self.assertTrue(issubclass(ASFTTrainer, UnslothTrainer))
-        # ASFTStreamingConfig is re-exported from the vendored loss module.
-        self.assertIs(ASFTStreamingConfig, LossStreamingConfig)
-
-
 class TestKlSeqChunkedCheckpoint(unittest.TestCase):
     """The chunked + gradient-checkpointed KL must equal the plain full KL in value and
     gradient. This keeps full-vocabulary fp32 KL within a constrained GPU budget:

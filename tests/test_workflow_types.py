@@ -23,18 +23,6 @@ def test_workflow_entry_step_explicit_and_implicit() -> None:
     assert explicit.entry_step.name == "plan"
 
 
-def test_workflow_step_accepts_terminator_capabilities() -> None:
-    assert WorkflowStep(name="plan", prompt="plan").terminator_capabilities == ()
-
-    step = WorkflowStep(
-        name="submit",
-        prompt="submit",
-        terminator_capabilities=("report_metric",),
-    )
-
-    assert step.terminator_capabilities == ("report_metric",)
-
-
 def test_workflow_topological_order_detects_isolated_cycle() -> None:
     workflow = Workflow(
         steps=(

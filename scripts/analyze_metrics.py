@@ -860,7 +860,6 @@ def render_run_table(summary: dict[str, Any]) -> str:
             values.append(val)
             cells.append(_fmt_cell(val, key or ""))
 
-        # Compute total column
         if total_mode == "wall_clock":
             cells = [label] + ["—"] * len(generations)
             wc = summary.get("total_wall_clock_seconds")
@@ -889,7 +888,6 @@ def render_run_table(summary: dict[str, Any]) -> str:
 
         rows.append(cells)
 
-    # Compute column widths
     col_widths = [len(h) for h in all_headers]
     for row in rows:
         for i, cell in enumerate(row):

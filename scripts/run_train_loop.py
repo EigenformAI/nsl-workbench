@@ -911,7 +911,6 @@ def main(argv: list[str] | None = None) -> Path:
     if config.generation is None:
         config.generation = AppConfig.GenerationConfig()
 
-    # Load task at startup
     task = load_task(config.task.class_, config.task.config)
     logger.info(f"Loaded task: {task.name} ({task.description})")
 

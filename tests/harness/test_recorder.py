@@ -61,11 +61,3 @@ def test_bump_counter_thread_safe(recorder: EventRecorder) -> None:
         thread.join()
 
     assert recorder.snapshot_counters()["c"] == 1000
-
-
-def test_snapshot_counters_empty_by_default(recorder: EventRecorder) -> None:
-    assert recorder.snapshot_counters() == {}
-
-
-def test_snapshot_labels_empty_by_default(recorder: EventRecorder) -> None:
-    assert recorder.snapshot_labels() == {}

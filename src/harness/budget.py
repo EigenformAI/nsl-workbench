@@ -161,7 +161,6 @@ class BudgetLedger:
             batch_size = len(requests)
             constraints = self._effective_constraints()
 
-            # Check global limit
             max_calls = constraints.max_task_tool_calls
             if max_calls is not None:
                 if self._task_tool_calls_used + batch_size > max_calls:
@@ -172,14 +171,12 @@ class BudgetLedger:
                     )
                     return ToolCallReservation(accepted=False, rejection_reason=kind)
 
-            # Count per-name in this batch
             batch_counts: dict[str, int] = {}
             for req in requests:
                 batch_counts[req.capability_name] = (
                     batch_counts.get(req.capability_name, 0) + 1
                 )
 
-            # Check per-name limits
             for name, batch_count in batch_counts.items():
                 per_name_limit = constraints.max_task_tool_calls_by_name.get(name)
                 if per_name_limit is not None:
@@ -188,7 +185,6 @@ class BudgetLedger:
                         kind = f"task_tool_calls_by_name:{name}"
                         return ToolCallReservation(accepted=False, rejection_reason=kind)
 
-            # All checks passed — consume budget
             self._task_tool_calls_used += batch_size
             for name, count in batch_counts.items():
                 # Track ALL names so a later step can introduce a per-name cap

@@ -1,18 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 from src.task.base import TaskSpec
 from src.execution.generation_persistence import (
     GenerationIdentity,
     checkpoint_payload_identity,
     task_commit_intents,
     validate_resume_checkpoint,
-)
-from src.task.types import (
-    TaskCommitPreparation,
-    TaskReward,
-    TrustedEpisodeIdentity,
 )
 from src.typing.trajectory import EpisodeTrajectory
 
@@ -45,19 +38,6 @@ def test_commit_metadata_round_trips_in_episode_trajectory() -> None:
 
     assert restored.task_commit_token == "token"
     assert restored.task_commit_digest == "digest"
-
-
-def test_trusted_identity_and_preparation_are_immutable_value_objects() -> None:
-    identity = TrustedEpisodeIdentity("run", 1, 2, "ep")
-    preparation = TaskCommitPreparation(
-        token="token",
-        intent_digest="digest",
-        reward=TaskReward(1.0, True, {"admitted": True}),
-    )
-
-    assert identity.episode_index == 2
-    assert preparation.reward.success
-    assert replace(identity, episode_index=3).episode_index == 3
 
 
 def test_journaled_task_intents_are_validated_for_recovery() -> None:

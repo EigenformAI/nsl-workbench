@@ -42,7 +42,7 @@ class PList:
 
 class ClaudeConfig(NamedTuple):
     name: str = "Claude"
-    model: str = "claude-3-5-sonnet-20241022"  # Latest Claude model
+    model: str = "claude-3-5-sonnet-20241022"
     max_tokens: int = 1000
     temperature: float = 0.5
 
@@ -64,7 +64,6 @@ class ClaudeGenner(Genner):
         temperature: float | None = None,
     ) -> Result[InferenceResult, str]:
         try:
-            # Convert messages format for Claude
             claude_messages = []
             system_message = ""
 
@@ -76,7 +75,6 @@ class ClaudeGenner(Genner):
                         {"role": msg["role"], "content": msg.get("content") or ""}
                     )
 
-            # Create Claude API call
             response = self.client.messages.create(
                 model=self.config.model,
                 max_tokens=(

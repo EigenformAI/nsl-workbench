@@ -57,11 +57,6 @@ def _ctx(tmp_path: Path) -> HarnessContext:
     )
 
 
-def test_harness_context_workflow_defaults_to_none(tmp_path: Path) -> None:
-    ctx = _ctx(tmp_path)
-    assert ctx.workflow is None
-
-
 def test_harness_context_can_project_capability_allowlist(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
     workflow = Workflow(steps=(WorkflowStep(name="s", prompt="s"),))

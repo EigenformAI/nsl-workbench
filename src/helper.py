@@ -80,7 +80,7 @@ def unflatten_toml_dict(d: dict) -> dict:
         parts = key.split(".")
         current_level = result
         for i, part in enumerate(parts):
-            if i == len(parts) - 1:  # Last part, assign value
+            if i == len(parts) - 1:
                 current_level[part] = value
             else:
                 current_level = current_level.setdefault(part, {})
@@ -98,7 +98,6 @@ def generate_readable_run_id(
     characters = string.ascii_lowercase + string.digits
     random_part = "".join(random.choices(characters, k=random_length))
 
-    # 4. Combine the parts
     run_id = f"{date_part}{separator}{random_part}"
 
     return run_id
@@ -125,27 +124,23 @@ def get_formatted_repo_info():
     If not in a git repository, returns a default identifier based on timestamp.
     """
     try:
-        # 1. Preliminary check: Is this a Git repository?
         subprocess.check_output(
             ["git", "rev-parse", "--git-dir"],
             stderr=subprocess.DEVNULL,
             text=True,
         )
 
-        # 2. Get current commit hash.
         commit_hash_raw = subprocess.check_output(
             ["git", "rev-parse", "HEAD"],
             text=True,
         ).strip()
         commit_hash_lower = commit_hash_raw.lower()
 
-        # 3. Get current branch name.
         branch_name_raw = subprocess.check_output(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True
         ).strip()
         branch_name_lower = branch_name_raw.lower()
 
-        # 4. Get hash of uncommitted files.
         status_output = subprocess.check_output(
             ["git", "diff", "--stat"], text=True
         ).strip()

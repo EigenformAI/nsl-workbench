@@ -27,25 +27,11 @@ The compute service has `network_mode: none`, a read-only root filesystem, a non
 
 MS-agent has network access and a writable `/work` scratch mount. It is not the compute sandbox. Do not add repository-root, dataset, calibration, model-cache, or Docker-socket mounts to either container.
 
-## Output locations
+## Output source index
 
-Paths below are relative to the checkout. The train loop prints its generated run identifier. `<run>` and `<episode>` denote runtime-generated names, not literal directory names.
-
-| Output | Train path |
-| --- | --- |
-| Archive and blobs | `data/materials-train/state/` |
-| Episode events and metrics | `data/materials-train/train-data/` |
-| Episode scratch | `code/materials-train/episode_v2_mode/harness-<episode>/` |
-| Run summary | `data/materials-train/generations/<run>/run.json` |
-| Generation publication | `data/materials-train/generations/<run>/generation_<n>/` |
-| Active training export pointer | `generation_<n>/exports/sft/latest.json` within the run directory |
-| Exported rows | `generation_<n>/exports/sft/<export>/sft_training_rows.jsonl` within the run directory |
-| Trained GGUF | `models/materials-train/<run>/after_generation_0.gguf` |
-| Training completion metadata | `models/materials-train/<run>/after_generation_0.training_info.json` |
-
-Smoke substitutes `materials-smoke` for `materials-train` in data and scratch paths and performs no fit. The standalone generation command publishes below its configured generation directory without the train loop's `<run>` subdirectory. The episode command does not perform final export publication.
-
-Parallel execution adds `slot_<n>/` beneath the configured code-cache directory. Generation logging can write `generation_<n>/run.log`. Serial execution also emits diagnostics to the active Loguru sinks. The operator controls shell redirection and any additional logging sinks.
+- [Smoke paths](../config/config-materials-adsorption-smoke.toml) and [training paths](../config/config-materials-adsorption-train.toml)
+- [Run and trained-model paths](../scripts/run_train_loop.py)
+- [Generation publications](../src/execution/generation_persistence.py) and [training artifacts](../src/train/artifacts.py)
 
 ## Credentials and diagnostic recording
 
@@ -77,8 +63,6 @@ uv run python scripts/run_train_loop.py \
 
 Replace `<printed-run-identifier>` with the actual identifier before running the command. Omitting `--run-id` starts a new run. It still uses the configured task archive. For an independent experiment, change the archive, blob, code-cache, generation, training-data, and adapter-output paths together.
 
-The loop skips a completed generation only after validating its completion marker, publication metadata, export, and expected serving lineage. It reuses a completed trained artifact with valid matching metadata. Missing completion markers can require recomputation. Corrupt metadata, incompatible artifacts, or wrong path/predecessor lineage cause errors.
-
-Each generation publishes `COMPLETED.json`, `metadata.json`, and `generation_manifest.json`. Serving lineage records `backend`, `model_name`, `request_model`, `served_artifact_kind`, `served_artifact_path`, `predecessor_generation_id`, and `external_lora_attested`. These identify configured serving paths and ancestry. They do not attest the bytes loaded into GPU memory.
+Serving lineage identifies configured serving paths and ancestry. It does not attest the bytes loaded into GPU memory.
 
 Generation-boundary recovery is distinct from optimizer-state recovery. No mid-fit GGUF checkpoint or optimizer-state resume is promised. There is no `--resume`, `--stop-after-generation`, or `--skip-training` switch. Do not infer safe boundary stopping from Ctrl+C timing.

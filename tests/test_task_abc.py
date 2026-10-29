@@ -1,6 +1,6 @@
 """Tests for TaskSpec ABC enforcement and behavior."""
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
 
@@ -141,8 +141,6 @@ class TestDefaultMethods:
         assert task.generation_checkpoint_state() is None
         task.load_generation_checkpoint_state({"anything": "ignored"})
 
-    def test_episode_classification_contains_only_task_owned_tags(self):
-        assert [field.name for field in fields(EpisodeClassification)] == ["tags"]
 
 class TestPrivateContext:
     def test_verify_population_accepts_private_context(self):

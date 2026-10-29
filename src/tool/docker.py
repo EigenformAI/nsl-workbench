@@ -33,12 +33,6 @@ def write_code_in_con(
 ) -> Tuple[str, str]:
     """Write code into a temporary file in the host machine first then to the container.
 
-    Algorithm:
-    - Write code into a temporary file in the host machine
-    - Create a tar archive containing the file
-    - Copy the tar archive to the container's root directory
-    - Check if the file exists in the container
-
     Args:
         code (str): The code to write into the container
         postfix (str): The type identifier for the agent, used in the file path
@@ -52,32 +46,24 @@ def write_code_in_con(
             - The path to the temporary file in the container
             - The reflected code (content of the file as read from the container)
     """
-    # Create temp file name with timestamp
     current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
     temp_file_name = f"temp_script_{current_time}.py"
     temp_file_path = f"{in_container_path}/{temp_file_name}"
 
-    # Create host file path and ensure directory exists
-    # logger.info(f"Writing file {temp_file_name} into host machine")
     host_path = host_cache_folder / temp_file_name
     host_path.parent.mkdir(parents=True, exist_ok=True)
     host_path.write_text(code)
 
-    # Create a tar archive in memory
     tar_stream = io.BytesIO()
     with tarfile.open(fileobj=tar_stream, mode="w") as tar:
         tar.add(host_path, arcname=temp_file_name)
     tar_stream.seek(0)
-
-    # Copy the file to the container's root directory
-    # logger.info(f"Writing file {temp_file_name} into container")
 
     succeed = container.put_archive(path=in_container_path, data=tar_stream.read())
 
     if not succeed:
         raise Exception("Failed to write code into the container")
 
-    # Check if file exists in container
     check_exist_command = (
         f"test -f {temp_file_path} && echo 'File exists' || echo 'File does not exist'"
     )
@@ -91,7 +77,6 @@ def write_code_in_con(
             f"File verification failed: {check_exist_result.output.decode('utf-8')}"
         )
 
-    # Read the file content
     reflected_code = container.exec_run(cmd=["cat", temp_file_path]).output.decode(
         "utf-8"
     )

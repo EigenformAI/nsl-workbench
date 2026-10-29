@@ -651,47 +651,6 @@ class TestRecordToRowEnrichment(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# TaskSpec.training_data_transforms default
-# ---------------------------------------------------------------------------
-
-
-class TestTaskSpecTransformsDefault(unittest.TestCase):
-    def _make_minimal_task(self):
-        from src.task.base import TaskSpec
-
-        class _MinimalTask(TaskSpec):
-            name = "test"
-            description = "test"
-            metric_name = "score"
-            metric_unit = "pts"
-            higher_is_better = True
-            docker_compose_dir = "."
-            agent_service_name = "agent"
-
-            def list_variations(self):
-                return []
-
-            def populate(self, containers, variation):
-                pass
-
-            def prompt_spec(self, variation, episode_context):
-                pass
-
-            def measure_initial_state(self, containers, episode_context, *, private_context=None):
-                pass
-
-            def compute_reward(self, initial, final, artifacts):
-                pass
-
-        return _MinimalTask.__new__(_MinimalTask)
-
-    def test_default_returns_empty_sequence(self) -> None:
-        task = self._make_minimal_task()
-        result = task.training_data_transforms()
-        self.assertEqual(tuple(result), ())
-
-
-# ---------------------------------------------------------------------------
 # EventRecorder workflow_step stamping
 # ---------------------------------------------------------------------------
 

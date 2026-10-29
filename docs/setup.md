@@ -97,6 +97,4 @@ uv run python scripts/run_train_loop.py --config config/config-materials-adsorpt
 
 The smoke configuration permits one episode. If you already used the episode-only entry point, select fresh smoke output paths before using the export entry point. Repeated standalone calls do not provide train-loop resume semantics. An episode without an accepted rewrite produces no task-derived training rows.
 
-The training configuration uses SFT, batch size one, gradient accumulation one, one optimizer step, zero warmup, and f16 GGUF export. Its candidate limits are 65,536 inference-context tokens, 4,096 output tokens per call, and 8,192 training-sequence tokens.
-
 See [Runtime and recovery](runtime.md) for paths and stop/resume commands.

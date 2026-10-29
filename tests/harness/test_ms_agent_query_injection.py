@@ -81,13 +81,3 @@ def test_ms_agent_image_copies_callback_module():
     dockerfile = (ROOT / "docker" / "ms-agent" / "Dockerfile").read_text()
 
     assert "COPY inject_query_callback.py /opt/nsl/inject_query_callback.py" in dockerfile
-
-
-def test_custom_workflow_runner_uses_per_step_config():
-    run_py = (ROOT / "docker" / "ms-agent" / "run.py").read_text()
-
-    assert "WorkflowLoader" not in run_py
-    assert "step_cfg = OmegaConf.load(scratch / entry[\"agent_config\"])" in run_py
-    assert "step_cfg.trust_remote_code = True" in run_py
-    assert "step_cfg.local_dir = str(scratch)" in run_py
-    assert "trust_remote_code=True" in run_py

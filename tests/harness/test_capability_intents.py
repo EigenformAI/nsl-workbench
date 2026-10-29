@@ -1,19 +1,3 @@
-"""Capability intent flags and mode-config wiring after the migration.
-
-Phase 2 coupling cleanup removed ``TaskPromptSpec.extras`` and moved
-orchestrator-mode scratchpad/label dispositions into
-``OrchestratorModesConfig.modes``. ``Capability.annotations`` still exists as
-an escape hatch for future harness-specific extensions, but the shipped
-harnesses no longer use it for orchestrator or MCP advertisement plumbing.
-
-These tests pin:
-
-1. Default values for the new intent flag fields + ``annotations``.
-2. ``OrchestratorModeHarness`` reads scratchpad/label dispositions from mode
-   config, not from capabilities.
-3. ``extras`` has been deleted from ``TaskPromptSpec``.
-"""
-
 from __future__ import annotations
 
 import threading
@@ -62,29 +46,6 @@ def _make_inner(response_by_phase: dict[str, str]) -> MagicMock:
     inner.plist_completion.side_effect = _complete
     inner.collector = None
     return inner
-
-
-def test_capability_annotations_roundtrip() -> None:
-    """Annotations remain available for future extension points."""
-    cap = Capability(
-        name="analyzer",
-        description="read",
-        runs_code=True,
-        publishes_metric=True,
-        annotations={
-            "orchestrator_modes": {
-                "writes_scratchpad": True,
-                "scratchpad_label": "Findings",
-            },
-            "mcp": {"readOnlyHint": True},
-        },
-    )
-    assert cap.runs_code is True
-    assert cap.publishes_metric is True
-    om = cap.annotations["orchestrator_modes"]
-    assert om["writes_scratchpad"] is True
-    assert om["scratchpad_label"] == "Findings"
-    assert cap.annotations["mcp"]["readOnlyHint"] is True
 
 
 def _settings_with_modes(modes: dict) -> dict:

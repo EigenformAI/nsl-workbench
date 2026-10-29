@@ -147,13 +147,11 @@ class ParallelProgressDisplay:
                 self._metrics["tok_s"] = tok_s
 
     def _render(self) -> Group:
-        """Build the display: title, progress bars, metrics line, per-slot table."""
         title = Text(
             f"Generation {self._generation_id} -- {self._run_id}",
             style="bold",
         )
 
-        # Metrics line
         with self._lock:
             metrics = dict(self._metrics)
             telemetry_columns = list(self._telemetry_columns)
@@ -185,7 +183,6 @@ class ParallelProgressDisplay:
             parts.append(f"tok/s: {metrics['tok_s']:.1f}")
         metrics_text = Text("  ".join(parts), style="dim") if parts else Text("")
 
-        # Per-slot table
         table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
         table.add_column("Slot", justify="right", width=4)
         table.add_column("Status", width=12)

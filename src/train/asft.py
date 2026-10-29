@@ -570,15 +570,12 @@ def _compute_kl_batch_micro(
     for b_start in range(0, batch_size, microbatch_size):
         b_end = min(b_start + microbatch_size, batch_size)
 
-        # Slice inputs for microbatch
         mb_inputs = _slice_batch_inputs(forward_inputs, batch_size, b_start, b_end)
 
-        # Get reference logits for microbatch
         ref_outputs_mb = ref_forward(**mb_inputs)
         ref_logits_mb, _ = _unwrap_reference_outputs(ref_outputs_mb)
         cur_logits_mb = cur_logits[b_start:b_end]
 
-        # Compute KL for this microbatch
         kl_mb = _compute_kl_divergence(
             cur_logits_mb,
             ref_logits_mb,
@@ -589,7 +586,6 @@ def _compute_kl_batch_micro(
             kl_direction,
         )
 
-        # Reshape if needed
         if kl_mb.dim() == 1:
             mb_batch = b_end - b_start
             kl_mb = kl_mb.reshape(mb_batch, -1)
@@ -718,7 +714,6 @@ def _compute_kl_seq_kv_cache(
     for s_start in range(0, seq_len, seq_chunk_size):
         s_end = min(s_start + seq_chunk_size, seq_len)
 
-        # Build chunk inputs
         chunk_inputs = {}
         for key, value in forward_inputs.items():
             if key == "input_ids":
@@ -737,14 +732,12 @@ def _compute_kl_seq_kv_cache(
             else:
                 chunk_inputs[key] = value
 
-        # Add past_key_values if available
         if past_key_values is not None:
             chunk_inputs["past_key_values"] = past_key_values
 
         chunk_inputs["use_cache"] = True
 
         try:
-            # Get reference logits for chunk
             # Note: ref_forward may not support all these kwargs
             ref_outputs = ref_forward(**chunk_inputs)
             ref_logits_chunk, ref_past_key_values = _unwrap_reference_outputs(
@@ -795,7 +788,6 @@ def _compute_kl_seq_kv_cache(
 
             cur_logits_chunk = cur_logits[:, s_start:s_end]
 
-            # Compute KL for this chunk
             kl_chunk = _compute_kl_divergence(
                 cur_logits_chunk,
                 ref_logits_chunk,
