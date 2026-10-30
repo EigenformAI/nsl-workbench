@@ -1,6 +1,6 @@
 # Negative Space Learning v2
 
-An experimental framework for recursive agent learning. An agent attempts tasks, accepted rewrites become training data, and the trained model attempts the next round.
+An framework for recursive self-training. An agent attempts tasks, successful attempts shape the training data, and the trained model attempts the next round, ad-infinitum.
 
 The included materials-adsorption task asks the agent to discover adsorption rules from descriptors of initial atomic structures. Scoring labels are hidden from the agent during an episode. The example uses MS-agent, local Docker Compose, llama.cpp inference, and GPU supervised fine-tuning (SFT).
 
