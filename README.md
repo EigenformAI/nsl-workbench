@@ -1,43 +1,29 @@
 # Negative Space Learning v2
 
-`negative-space-learning-v2` is a framework for recursive agent learning: generate task trajectories, train on accepted rewrites, and generate the next round with the trained model. This snapshot includes a materials-adsorption task using MS-agent, local Docker Compose, llama.cpp inference, and GPU SFT training.
+An experimental framework for recursive agent learning. An agent attempts tasks, accepted rewrites become training data, and the trained model attempts the next round.
 
-The materials task asks an agent to discover adsorption rules from pre-DFT descriptors without access to scoring labels.
+The included materials-adsorption task asks the agent to discover adsorption rules from descriptors of initial atomic structures. Scoring labels are hidden from the agent during an episode. The example uses MS-agent, local Docker Compose, llama.cpp inference, and GPU supervised fine-tuning (SFT).
 
-## Run the example
+## Example workflow
 
-Follow [Set up a source checkout](docs/setup.md). Choose one smoke entry point from the repository root.
+The [source setup guide](docs/setup.md) covers prerequisites, locked dependencies, model preparation, container builds, and run commands. The example uses Linux x86-64, Python 3.12, a local Docker Engine with Compose, and an NVIDIA GPU with a compatible CUDA toolchain. Installation is source-only.
 
-To attempt one episode without final export publication:
+The two example configurations serve different purposes:
 
-```bash
-uv run python scripts/run_episode.py config/config-materials-adsorption-smoke.toml
-```
+- [Smoke configuration](config/config-materials-adsorption-smoke.toml): one episode to attempt a training-data export. An accepted rewrite is not guaranteed.
+- [Training configuration](config/config-materials-adsorption-train.toml): two generations with one SFT phase between them. Smoke and training use separate output paths and task archives.
 
-Alternatively, to attempt one episode and publish its export:
+The [runtime and recovery reference](docs/runtime.md) describes network exposure, credentials in logs, output state, and recovery after interruption. Repeated smoke attempts need fresh output paths. A new training run identifier still uses the configured task archive.
 
-```bash
-uv run python scripts/generate_training_data.py --config config/config-materials-adsorption-smoke.toml
-```
+## Source and data
 
-Do not run both smoke entry points against the same existing generation directory. To repeat smoke, use fresh smoke output paths.
+The source and provenance indexes are:
 
-To attempt recursive training with its separate state:
+- [Materials task source index](docs/materials-task.md): task workflow, scoring, archive, and training-row selection.
+- [Compact task assets](assets/materials-adsorption/oc20-dense-mini-v1/README.md): dataset provenance, calibration limits, attribution, and checksums.
 
-```bash
-uv run python scripts/run_train_loop.py --config config/config-materials-adsorption-train.toml
-```
-
-Smoke outputs and the smoke archive are separate from training outputs and the training archive. Read [Runtime and recovery](docs/runtime.md) before stopping or resuming a run.
-
-## Read more
-
-- [Materials task source index](docs/materials-task.md).
-- [Runtime and recovery](docs/runtime.md): network access, credentials, and resume behavior.
-- [Compact task assets](assets/materials-adsorption/oc20-dense-mini-v1/README.md): dataset provenance and checksums.
-
-Generic task interfaces, the orchestration harness, other inference backends, and SFT, DFT, and ASFT objectives remain available. Installation is source-only on Linux x86-64 with Python 3.12. No wheel-installation workflow is provided.
+The framework also includes generic task interfaces, other inference backends, and other training objectives.
 
 ## Licenses
 
-No repository-wide first-party license has been selected. Public source availability does not grant general reuse rights. [Third-party notices](THIRD_PARTY_NOTICES.md) identify component-specific terms. The OC20Dense-derived data has separate attribution and CC-BY-4.0 terms. Model weights have their own upstream terms and are not included.
+No repository-wide first-party license has been selected. Public source availability does not grant general reuse rights. [Third-party notices](THIRD_PARTY_NOTICES.md) identify component-specific terms. The OC20Dense-derived data has separate attribution requirements and CC BY 4.0 terms. Model weights are not included and have their own upstream terms.
