@@ -19,6 +19,7 @@ class ServerConfig:
     timeout: int = 300
     frequency_penalty: Optional[float] = None
     presence_penalty: Optional[float] = None
+    seed: Optional[int] = None
 
 
 @dataclass

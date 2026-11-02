@@ -1,6 +1,6 @@
 # Negative Space Learning v2
 
-An framework for recursive self-training. An agent attempts tasks, successful attempts shape the training data, and the trained model attempts the next round, ad-infinitum.
+A framework for recursive self-training. An agent attempts tasks, successful attempts shape the training data, and the trained model attempts the next round in repeated generations.
 
 The included materials-adsorption task asks the agent to discover adsorption rules from descriptors of initial atomic structures. Scoring labels are hidden from the agent during an episode. The example uses MS-agent, local Docker Compose, llama.cpp inference, and GPU supervised fine-tuning (SFT).
 
@@ -14,6 +14,8 @@ The two example configurations serve different purposes:
 - [Training configuration](config/config-materials-adsorption-train.toml): two generations with one SFT phase between them. Smoke and training use separate output paths and task archives.
 
 The [runtime and recovery reference](docs/runtime.md) describes network exposure, credentials in logs, output state, and recovery after interruption. Repeated smoke attempts need fresh output paths. A new training run identifier still uses the configured task archive.
+
+The [cleanup task reference](docs/cleanup-task.md) covers a second task: remove disposable files while preserving a container's viability. It includes native-orchestrator and MS-agent smoke configurations, plus a three-generation training example.
 
 ## Source and data
 

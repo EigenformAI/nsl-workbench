@@ -16,7 +16,8 @@
 # 5dc8ee0b3597c5c78de66db132499b431a0aa8c2. Changes: rehome the module, add source
 # metadata, skip inactive KL/reference work, support noncontiguous KL tensors,
 # log legacy sequence-KV fallbacks, and use a full reference forward with
-# sequence-chunked KL and optional non-reentrant gradient checkpointing.
+# sequence-chunked KL and optional non-reentrant gradient checkpointing. Add
+# explicit normalization contracts and detached update-window denominator/RNG seams.
 # Legacy reference-streaming helpers remain defined but are not the active KL path.
 
 """Anchored Supervised Fine-Tuning (ASFT) Loss Module for Unsloth.
@@ -41,8 +42,10 @@ from __future__ import annotations
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
+import random
 from typing import Any, Callable, Dict, Literal, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -67,7 +70,74 @@ __all__ = [
     "get_reference_forward_callable",
     "compute_asft_loss",
     "resolve_effective_mode",
+    "normalized_objective",
 ]
+
+_NormalizationSemantics = Literal[
+    "token_count_v0", "microbatch_weights_v0", "update_weights_v1"
+]
+_NORMALIZATION_SEMANTICS = (
+    "token_count_v0", "microbatch_weights_v0", "update_weights_v1"
+)
+_WEIGHT_NORMALIZATION_SEMANTICS = _NORMALIZATION_SEMANTICS[1:]
+
+
+def normalized_objective(
+    weighted_ce_sum: torch.Tensor,
+    *,
+    weight_sum: torch.Tensor,
+    token_count: torch.Tensor,
+    normalization_semantics: Literal["microbatch_weights_v0", "update_weights_v1"],
+    update_weight_sum: Optional[torch.Tensor] = None,
+    update_token_count: Optional[torch.Tensor] = None,
+    kl_sum: Optional[torch.Tensor] = None,
+    kl_weight: float = 0.0,
+) -> torch.Tensor:
+    """Reduce weighted CE while keeping anchored KL token-normalized.
+
+    Detached denominators set gradient scale without differentiating through the
+    confidence weights. Update-wide statistics cover every accumulation microbatch
+    and process, not just the current forward.
+    """
+    if normalization_semantics == "microbatch_weights_v0":
+        weight_denominator = weight_sum.detach().clamp_min(1e-8)
+        token_denominator = token_count.detach().clamp_min(1)
+    elif normalization_semantics == "update_weights_v1":
+        if update_weight_sum is None:
+            raise ValueError("update_weight_sum is required for update_weights_v1")
+        if update_token_count is None:
+            raise ValueError("update_token_count is required for update_weights_v1")
+        weight_denominator = update_weight_sum.detach().clamp_min(1e-8)
+        token_denominator = update_token_count.detach().clamp_min(1)
+    else:
+        raise ValueError(f"Unknown normalization_semantics: {normalization_semantics}")
+    loss = weighted_ce_sum / weight_denominator
+    if kl_sum is not None and kl_weight != 0.0:
+        loss = loss + kl_weight * kl_sum / token_denominator
+    return loss
+
+
+@dataclass(frozen=True)
+class _RNGState:
+    python: object
+    numpy: tuple
+    torch_cpu: torch.Tensor
+    torch_cuda: Optional[list[torch.Tensor]]
+
+
+def _capture_rng_state() -> _RNGState:
+    cuda_state = torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+    return _RNGState(
+        random.getstate(), np.random.get_state(), torch.random.get_rng_state(), cuda_state
+    )
+
+
+def _restore_rng_state(state: _RNGState) -> None:
+    random.setstate(state.python)
+    np.random.set_state(state.numpy)
+    torch.random.set_rng_state(state.torch_cpu)
+    if state.torch_cuda is not None:
+        torch.cuda.set_rng_state_all(state.torch_cuda)
 
 
 # Default chunk sizes for streaming strategies
@@ -955,9 +1025,12 @@ def compute_asft_loss(
     reference_policy: Literal["disable_adapter", "frozen_copy"] = "disable_adapter",
     streaming_config: Optional[ASFTStreamingConfig] = None,
     original_model: Optional[nn.Module] = None,
-    normalize_by: Literal["tokens", "weights"] = "tokens",
+    normalization_semantics: _NormalizationSemantics = "token_count_v0",
+    update_weight_sum: Optional[torch.Tensor] = None,
+    update_token_count: Optional[torch.Tensor] = None,
     checkpoint_kl: bool = True,
     return_outputs: bool = False,
+    denominator_stats: Optional[Callable[[torch.Tensor], None]] = None,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, Any]]:
     """Compute ASFT loss.
 
@@ -976,12 +1049,18 @@ def compute_asft_loss(
         reference_policy: How to get reference distribution.
         streaming_config: Configuration for streaming strategies.
         original_model: Optional pre-created frozen reference model.
-        normalize_by: "tokens" (default, matches reference) or "weights" for DFT/ASFT.
+        normalization_semantics: Token count, microbatch weight sum, or detached
+            complete-update weight sum. KL stays token-normalized in weight modes.
+        update_weight_sum: Detached complete-update DFT weight denominator.
+        update_token_count: Detached complete-update KL token denominator.
         return_outputs: Whether to return model outputs alongside loss.
+        denominator_stats: Sink for detached ``(weight_sum, valid_token_count)``.
 
     Returns:
         Loss tensor, or (loss, outputs) tuple if return_outputs=True.
     """
+    if normalization_semantics not in _NORMALIZATION_SEMANTICS:
+        raise ValueError(f"Unknown normalization_semantics: {normalization_semantics}")
     if streaming_config is None:
         streaming_config = ASFTStreamingConfig()
 
@@ -1026,14 +1105,17 @@ def compute_asft_loss(
 
     # Valid mask and normalization
     valid_mask = shift_labels != -100
+    valid_token_count = valid_mask.sum()
     n_items_tokens = inputs.get("num_items_in_batch", None)
     if n_items_tokens is None:
-        n_items_tokens = valid_mask.sum()
+        n_items_tokens = valid_token_count
     n_items_tokens = max(n_items_tokens, 1)  # Avoid division by zero
 
     # Handle edge case: no valid tokens
-    if valid_mask.sum() == 0:
+    if valid_token_count == 0:
         zero_loss = logits.sum() * 0.0
+        if denominator_stats is not None:
+            denominator_stats(torch.zeros(2, dtype=torch.float64, device=logits.device))
         if return_outputs:
             return zero_loss, outputs
         return zero_loss
@@ -1051,6 +1133,7 @@ def compute_asft_loss(
     # "sft+kl" collapse to "dft"/"sft".
     effective_mode, kl_active = resolve_effective_mode(asft_mode, kl_weight)
     dft_weights = None
+    kl = None
     if effective_mode == "sft":
         # Standard SFT: just CE
         token_loss = ce_losses
@@ -1085,6 +1168,7 @@ def compute_asft_loss(
         )
         ref_outputs = ref_forward(**forward_inputs)
         ref_logits, _ = _unwrap_reference_outputs(ref_outputs)
+        del ref_outputs
         kl = _compute_kl_seq_chunked(
             logits,
             ref_logits,
@@ -1120,14 +1204,32 @@ def compute_asft_loss(
     else:
         raise ValueError(f"Unknown asft_mode: {asft_mode}")
 
-    # Final reduction: sum over valid tokens, divide by chosen normalizer.
-    normalizer = n_items_tokens
-    if normalize_by == "weights" and dft_weights is not None:
-        weight_sum = dft_weights[valid_mask].sum()
-        normalizer = weight_sum.clamp_min(1e-8)
-    elif normalize_by != "tokens":
-        raise ValueError(f"Unknown normalize_by: {normalize_by}")
-    loss = token_loss[valid_mask].sum() / normalizer
+    # Only weighted CE changes scale; anchoring KL retains a token denominator.
+    if normalization_semantics in _WEIGHT_NORMALIZATION_SEMANTICS:
+        if dft_weights is None:
+            raise ValueError("Weight normalization requires a DFT or ASFT objective")
+        loss = normalized_objective(
+            (ce_losses * dft_weights)[valid_mask].sum(),
+            weight_sum=dft_weights[valid_mask].sum(),
+            token_count=valid_token_count,
+            normalization_semantics=normalization_semantics,
+            update_weight_sum=update_weight_sum,
+            update_token_count=update_token_count,
+            kl_sum=kl[valid_mask].sum() if kl is not None else None,
+            kl_weight=kl_weight,
+        )
+    else:
+        loss = token_loss[valid_mask].sum() / n_items_tokens
+
+    if denominator_stats is not None:
+        if dft_weights is None:
+            raise ValueError("Denominator statistics require a DFT or ASFT objective")
+        denominator_stats(
+            torch.stack((
+                dft_weights[valid_mask].sum().detach().to(torch.float64),
+                valid_token_count.detach().to(torch.float64),
+            ))
+        )
 
     if return_outputs:
         return loss, outputs

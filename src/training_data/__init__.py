@@ -1,6 +1,7 @@
 from src.training_data.transforms import (
     EpisodeTrainingRows,
     ExportRecipe,
+    PerEpisodeRowCap,
     TrainingDataExport,
     TrainingDataExportContext,
     TrainingDataTransform,
@@ -16,6 +17,7 @@ from src.training_data.transforms import (
 __all__ = [
     "EpisodeTrainingRows",
     "ExportRecipe",
+    "PerEpisodeRowCap",
     "TrainingDataExport",
     "TrainingDataExportContext",
     "TrainingDataTransform",

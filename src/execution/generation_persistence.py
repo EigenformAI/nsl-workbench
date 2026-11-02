@@ -104,7 +104,7 @@ def serving_lineage_from_config(
             artifact_path = config.vllm.local_model_path
         if request_model is None:
             if config.vllm.lora_adapter_path:
-                request_model = "adapter"
+                request_model = config.vllm.external_request_model or "adapter"
             elif config.vllm.served_model_name:
                 request_model = config.vllm.served_model_name
             elif config.vllm.local_model_path:

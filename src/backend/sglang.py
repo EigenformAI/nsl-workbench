@@ -67,6 +67,7 @@ def _build_sglang_config(app_config: AppConfig, endpoint: str) -> SglangServerCo
     config.max_tokens = app_config.inference.max_tokens
     config.frequency_penalty = app_config.inference.frequency_penalty
     config.presence_penalty = app_config.inference.presence_penalty
+    config.seed = app_config.inference.seed
     if cfg is not None:
         config.mem_fraction_static = cfg.mem_fraction_static or config.mem_fraction_static
         if cfg.chat_template_path:

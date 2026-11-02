@@ -16,7 +16,8 @@
 # commit 5dc8ee0b3597c5c78de66db132499b431a0aa8c2. Changes: extract the class,
 # import the local loss with checkpointed sequence-chunk KL, request full logits
 # before parent initialization when ASFT is enabled, create frozen references
-# only when KL is active, and adapt types, documentation, and warnings.
+# only when KL is active, support detached update-window normalization with RNG
+# replay, and adapt types, documentation, and warnings.
 
 """Local ASFT trainer.
 
@@ -36,6 +37,8 @@ the PR:
   (see ``unsloth.trainer._patch_sft_trainer_auto_packing``), which would
   otherwise flatten the batch and break the ``(B, T)`` assumptions in
   ``compute_asft_loss``.
+* ``update_weights_v1`` measures a complete prefetched optimizer-update window,
+  then replays each stochastic forward with the same RNG state.
 
 With ``asft_enabled=False`` (the default) this class is behaviourally identical
 to ``UnslothTrainer``: no environment change, and ``compute_loss`` delegates to
@@ -49,10 +52,14 @@ import warnings
 from copy import deepcopy
 from typing import Literal, Optional
 
+import torch
+
 from unsloth.trainer import UnslothTrainer
 
 from src.train.asft import (
     ASFTStreamingConfig,
+    _capture_rng_state,
+    _restore_rng_state,
     compute_asft_loss,
     resolve_effective_mode,
 )
@@ -64,7 +71,9 @@ __all__ = ["ASFTTrainer", "ASFTStreamingConfig"]
 _AsftMode = Literal["sft", "dft", "sft+kl", "asft"]
 _KlDirection = Literal["forward", "reverse"]
 _ReferencePolicy = Literal["disable_adapter", "frozen_copy"]
-_NormalizeBy = Literal["tokens", "weights"]
+_NormalizationSemantics = Literal[
+    "token_count_v0", "microbatch_weights_v0", "update_weights_v1"
+]
 
 
 class ASFTTrainer(UnslothTrainer):
@@ -79,9 +88,13 @@ class ASFTTrainer(UnslothTrainer):
         kl_direction: _KlDirection = "forward",
         reference_policy: _ReferencePolicy = "disable_adapter",
         asft_streaming: Optional[ASFTStreamingConfig] = None,
-        normalize_by: _NormalizeBy = "tokens",
+        normalization_semantics: _NormalizationSemantics = "token_count_v0",
         **kwargs,
     ):
+        if asft_enabled and normalization_semantics not in (
+            "token_count_v0", "microbatch_weights_v0", "update_weights_v1"
+        ):
+            raise ValueError(f"Unknown normalization_semantics: {normalization_semantics}")
         if asft_enabled:
             # ASFT reads outputs.logits from a label-free forward; force unsloth to
             # return full logits (and, as a side effect, disable padding-free /
@@ -98,9 +111,108 @@ class ASFTTrainer(UnslothTrainer):
         self.asft_streaming: ASFTStreamingConfig = (
             asft_streaming or ASFTStreamingConfig()
         )
-        self.normalize_by: _NormalizeBy = normalize_by
+        self.normalization_semantics = normalization_semantics
         # Lazily created only if a frozen reference copy is actually required.
         self._asft_original_model = None
+        self._asft_replay_states = []
+        self._asft_terminal_rng_state = None
+        self._asft_active_replay_state = None
+        self._asft_update_denominator = None
+
+    def get_batch_samples(self, epoch_iterator, num_batches, device):
+        """Measure one complete update window, including a final partial window."""
+        batch_samples, num_items_in_batch = super().get_batch_samples(
+            epoch_iterator, num_batches, device
+        )
+        if not (
+            self.asft_enabled
+            and self.normalization_semantics == "update_weights_v1"
+        ):
+            return batch_samples, num_items_in_batch
+
+        self._asft_replay_states = []
+        self._asft_update_denominator = None
+        if not batch_samples:
+            self._asft_terminal_rng_state = _capture_rng_state()
+            return batch_samples, num_items_in_batch
+
+        model = getattr(self, "model_wrapped", None)
+        if model is None:
+            model = self.model
+        model.train()
+        denominator = None
+        with torch.no_grad():
+            for batch in batch_samples:
+                self._asft_replay_states.append(_capture_rng_state())
+                inputs = dict(self._prepare_inputs(batch))
+                received = []
+                compute_asft_loss(
+                    model=model,
+                    inputs=inputs,
+                    asft_mode="dft",
+                    kl_weight=0.0,
+                    streaming_config=self.asft_streaming,
+                    normalization_semantics="token_count_v0",
+                    denominator_stats=received.append,
+                )
+                if len(received) != 1:
+                    raise RuntimeError("ASFT denominator pass did not emit exactly one statistic")
+                value = received[0].detach().to(dtype=torch.float64)
+                denominator = value if denominator is None else denominator + value
+
+        self._asft_terminal_rng_state = _capture_rng_state()
+        if hasattr(self.accelerator, "reduce"):
+            denominator = self.accelerator.reduce(denominator, reduction="sum")
+        elif int(getattr(self.accelerator, "num_processes", 1)) > 1:
+            raise RuntimeError("update_weights_v1 requires a distributed sum reduction")
+        self._asft_update_denominator = denominator.detach()
+        return batch_samples, num_items_in_batch
+
+    def training_step(self, model, inputs, num_items_in_batch=None):
+        """Replay measured RNG state while retaining the parent backward path."""
+        if not (
+            self.asft_enabled
+            and self.normalization_semantics == "update_weights_v1"
+        ):
+            return super().training_step(model, inputs, num_items_in_batch)
+        if not self._asft_replay_states or self._asft_update_denominator is None:
+            raise RuntimeError(
+                "update_weights_v1 training_step requires a prefetched get_batch_samples window"
+            )
+        if (
+            (not self.model_accepts_loss_kwargs or num_items_in_batch is None)
+            and self.compute_loss_func is None
+            and self.current_gradient_accumulation_steps != 1
+        ):
+            # This parent path divides by the current window length before
+            # Accelerate's backward division. The source scaling contract only
+            # compensates Accelerate, so do not silently train a different loss.
+            raise RuntimeError(
+                "update_weights_v1 requires Trainer item-count loss handling; "
+                "the parent would apply an additional accumulation division"
+            )
+
+        self._asft_active_replay_state = self._asft_replay_states.pop(0)
+        loss_scale = self._update_loss_scale()
+        try:
+            loss = super().training_step(model, inputs, num_items_in_batch)
+        finally:
+            terminal_state = self._asft_terminal_rng_state
+            self._asft_active_replay_state = None
+            if terminal_state is not None:
+                _restore_rng_state(terminal_state)
+        return loss / loss_scale
+
+    def _update_loss_scale(self) -> int:
+        # Accelerate divides the backward loss by accumulation steps, and DDP
+        # averages gradients over processes. Undo both for a globally summed
+        # numerator over the globally summed denominator.
+        accumulation_steps = int(
+            getattr(self.accelerator, "gradient_accumulation_steps", 0)
+            or self.args.gradient_accumulation_steps
+        )
+        process_count = int(getattr(self.accelerator, "num_processes", 1))
+        return accumulation_steps * process_count
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         # ASFT disabled -> behave exactly like the parent trainer.
@@ -109,6 +221,17 @@ class ASFTTrainer(UnslothTrainer):
                 model, inputs, return_outputs=return_outputs, **kwargs
             )
 
+        if self.normalization_semantics == "update_weights_v1":
+            denominator = self._asft_update_denominator
+            replay_state = self._asft_active_replay_state
+            if denominator is None or replay_state is None:
+                raise RuntimeError(
+                    "update_weights_v1 compute_loss requires the get_batch_samples/training_step seam"
+                )
+        else:
+            denominator = None
+
+        inputs = dict(inputs)
         num_items_in_batch = kwargs.get("num_items_in_batch")
         if num_items_in_batch is not None:
             inputs["num_items_in_batch"] = num_items_in_batch
@@ -141,7 +264,9 @@ class ASFTTrainer(UnslothTrainer):
                 self._asft_original_model.eval()
                 self._asft_original_model.requires_grad_(False)
 
-        return compute_asft_loss(
+        if self.normalization_semantics == "update_weights_v1":
+            _restore_rng_state(replay_state)
+        result = compute_asft_loss(
             model=model,
             inputs=inputs,
             asft_mode=self.asft_mode,
@@ -150,6 +275,16 @@ class ASFTTrainer(UnslothTrainer):
             reference_policy=self.reference_policy,
             streaming_config=self.asft_streaming,
             original_model=self._asft_original_model,
-            normalize_by=self.normalize_by,
+            normalization_semantics=self.normalization_semantics,
+            update_weight_sum=denominator[0] if denominator is not None else None,
+            update_token_count=denominator[1] if denominator is not None else None,
             return_outputs=return_outputs,
         )
+        if self.normalization_semantics != "update_weights_v1":
+            return result
+
+        loss_scale = self._update_loss_scale()
+        if return_outputs:
+            loss, outputs = result
+            return loss * loss_scale, outputs
+        return result * loss_scale

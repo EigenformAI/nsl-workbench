@@ -1,0 +1,90 @@
+model_name = "llama:.model-cache/materials-base/initial.gguf"
+code_host_cache_path = "./code/cleanup-train"
+container_ids = ["special-learn-compose_service-a_1"]
+dynamic_container = true
+docker_compose_dir = "./docker/special-learn-compose"
+train_data_save_folder = "./data/cleanup-train/train-data"
+
+[inference]
+temperature = 0.5
+timeout = 300
+max_tokens = 4096
+seed = 0
+
+[llama]
+startup_timeout = 2400
+n_gpu_layers = -1
+ctx_size = 65536
+cache_type_k = "q4_0"
+cache_type_v = "q4_0"
+flash_attention = true
+parallel_slots = 1
+
+[task]
+class = "tasks.memory_cleanup.MemoryCleanupTask"
+
+[task.config]
+docker_compose_dir = "./docker/special-learn-compose"
+theta_base = 0.05
+theta_schedule = "linear"
+theta_step = 0.05
+theta_cap = 0.95
+max_rows_per_episode = 4
+keep = "random"
+
+[harness]
+name = "container"
+
+[harness.container]
+profile = "ms_agent"
+image = "negative-space-learning-v2/ms-agent:0.1.0"
+network_mode = "bridge"
+inference_transport = "tcp"
+max_wall_seconds = 2400
+mem_limit = "2g"
+
+[harness.container.build]
+context = "docker/ms-agent"
+
+[harness.container.profile_config]
+model = "memory-cleanup"
+max_chat_round = 18
+tool_call_timeout = 180
+transcript_tag = "episode"
+
+[generation]
+target_training_rows = 1
+max_episodes = 16
+parallel_episodes = 1
+variation_strategy = "round_robin"
+checkpoint_every_episode = true
+resume_from_checkpoint = true
+generation_output_dir = "./data/cleanup-train/generations"
+
+[training]
+base_model = ".model-cache/materials-base/transformers"
+max_steps = 1
+num_train_epochs = 1
+per_device_train_batch_size = 1
+gradient_accumulation_steps = 1
+learning_rate = 0.0002
+warmup_steps = 0
+warmup_ratio = 0.0
+inner_loss = "sft"
+inner_loss_schedule = [{ loss = "sft" }, { loss = "dft" }]
+lora_rank = 16
+lora_alpha = 16
+max_seq_length = 8192
+adapter_output_dir = "./models/cleanup-train"
+export_format = "gguf"
+gguf_quantize = "f16"
+
+[orchestration]
+num_generations = 3
+training_window_size = 1
+
+[observability]
+enabled = true
+record_inference = true
+record_phases = true
+record_resources = true

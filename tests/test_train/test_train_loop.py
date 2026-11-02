@@ -253,7 +253,7 @@ asft_reference_policy = "frozen_copy"
 asft_streaming = "hybrid"
 asft_ref_microbatch_size = 3
 asft_seq_chunk_size = 256
-asft_normalize_by = "weights"
+asft_normalization_semantics = "microbatch_weights_v0"
 """
         )
 
@@ -267,7 +267,7 @@ asft_normalize_by = "weights"
         self.assertEqual(config.training.asft_streaming, "hybrid")
         self.assertEqual(config.training.asft_ref_microbatch_size, 3)
         self.assertEqual(config.training.asft_seq_chunk_size, 256)
-        self.assertEqual(config.training.asft_normalize_by, "weights")
+        self.assertEqual(config.training.asft_normalization_semantics, "microbatch_weights_v0")
 
     def test_collect_training_window_uses_latest_n_generations(self) -> None:
         from scripts.run_train_loop import _collect_training_window_paths
@@ -311,6 +311,181 @@ asft_normalize_by = "weights"
                 / "sft_training_rows.jsonl",
             ],
         )
+
+    def test_loss_schedule_validates_training_phase_coverage_and_all_entries(self):
+        from src.typing.config import AppConfig
+
+        base = self.make_config(Path("unused"), num_generations=3).model_dump(by_alias=True)
+        base["training"]["inner_loss_schedule"] = [{"loss": "sft"}]
+        with self.assertRaisesRegex(ValueError, "2 training steps"):
+            AppConfig.model_validate(base)
+        base["orchestration"]["num_generations"] = 1
+        base["training"]["inner_loss_schedule"] = []
+        AppConfig.model_validate(base)
+        base["orchestration"]["num_generations"] = 2
+        with self.assertRaisesRegex(ValueError, "1 training steps"):
+            AppConfig.model_validate(base)
+
+        for step, mode, weight in (
+            ({"loss": "asft"}, "asft", 0),
+            ({"loss": "asft"}, "asft", float("inf")),
+            ({"loss": "asft", "asft_kl_weight": 0.2}, "dft", 0.2),
+            ({"loss": "sft", "asft_kl_weight": 0.2}, "asft", 0.2),
+            ({"loss": "asft", "asft_kl_weight": float("nan")}, "asft", 0.2),
+        ):
+            with self.subTest(step=step, mode=mode, weight=weight):
+                base["training"].update(
+                    inner_loss_schedule=[{"loss": "sft"}, step],
+                    asft_mode=mode, asft_kl_weight=weight,
+                )
+                with self.assertRaises(ValueError):
+                    AppConfig.model_validate(base)
+
+        training = AppConfig.TrainingConfig(
+            inner_loss="asft", asft_kl_weight=0,
+            asft_normalization_semantics="update_weights_v1",
+        )
+        self.assertEqual(training.resolve_inner_loss_step(0), ("asft", 0))
+        training = AppConfig.TrainingConfig(
+            asft_kl_weight=0.3,
+            inner_loss_schedule=[
+                {"loss": "dft"}, {"loss": "asft", "asft_kl_weight": 0.4},
+            ],
+        )
+        training.validate_inner_loss_schedule(3)
+        self.assertEqual(training.resolve_inner_loss_step(0), ("dft", 0.3))
+        self.assertEqual(training.resolve_inner_loss_step(1), ("asft", 0.4))
+        with self.assertRaises(IndexError):
+            training.resolve_inner_loss_step(-1)
+        with self.assertRaises(IndexError):
+            training.resolve_inner_loss_step(2)
+
+    def test_training_reuse_requires_only_applicable_objective_fields(self):
+        from scripts.run_train_loop import _validate_training_artifact_loss_step
+        from src.typing.config import AppConfig
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact = self._write_training_artifact(Path(tmpdir) / "adapter")
+            metadata_path = artifact / "training_info.json"
+            for loss in ("sft", "dft", "asft"):
+                training = AppConfig.TrainingConfig(
+                    inner_loss=loss, asft_kl_weight=0.2,
+                    asft_normalization_semantics="update_weights_v1",
+                )
+                applicable = {
+                    "inner_loss": loss, "strict_no_truncation": False,
+                }
+                if loss == "dft":
+                    applicable["dft_impl"] = "fused"
+                if loss == "asft":
+                    applicable.update({
+                        key: getattr(training, key) for key in (
+                            "asft_mode", "asft_kl_weight", "asft_kl_direction",
+                            "asft_reference_policy", "asft_streaming",
+                            "asft_normalization_semantics",
+                        )
+                    })
+                metadata = {"export_format": "lora", **applicable}
+                metadata_path.write_text(json.dumps(metadata))
+                _validate_training_artifact_loss_step(
+                    artifact, "lora", generation_id=0, training=training
+                )
+                for field in applicable:
+                    for changed in (None, "conflicting"):
+                        with self.subTest(loss=loss, field=field, changed=changed):
+                            wrong = dict(metadata)
+                            if changed is None:
+                                wrong.pop(field)
+                            else:
+                                wrong[field] = changed
+                            metadata_path.write_text(json.dumps(wrong))
+                            with self.assertRaisesRegex(ValueError, field + ".*fresh"):
+                                _validate_training_artifact_loss_step(
+                                    artifact, "lora", generation_id=0, training=training
+                                )
+
+    @patch("scripts.run_train_loop._invoke_train_sft")
+    @patch("scripts.run_train_loop.run_generation_phase")
+    def test_schedule_runs_after_collection_and_reuse_mismatch_never_retrains(
+        self, collect, train,
+    ):
+        from scripts.run_train_loop import run_loop
+        from src.typing.config import LossStep
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self.make_config(root, num_generations=3)
+            config.training.inner_loss_schedule = [
+                LossStep(loss="dft"), LossStep(loss="asft", asft_kl_weight=0.4),
+                LossStep(loss="sft"),
+            ]
+            config.training.asft_normalization_semantics = "update_weights_v1"
+            events = []
+
+            def generation(cfg, generation_id, *args, **kwargs):
+                events.append(("collect", generation_id, cfg.training.inner_loss))
+                directory = Path(cfg.generation.generation_output_dir) / f"generation_{generation_id}"
+                self._write_training_rows(directory, generation_id)
+                return directory, self._make_generation_data(generation_id)
+
+            def training(cfg, **kwargs):
+                events.append(("train", cfg.training.inner_loss, cfg.training.asft_kl_weight))
+                artifact = self._write_training_artifact(kwargs["output_dir"])
+                metadata = cfg.training.model_dump()
+                metadata["export_format"] = "lora"
+                (artifact / "training_info.json").write_text(json.dumps(metadata))
+                return artifact
+
+            collect.side_effect = generation
+            train.side_effect = training
+            result = run_loop(config, run_id="schedule", docker_client=MagicMock(), task=MagicMock())
+            self.assertEqual(events, [
+                ("collect", 0, "sft"), ("train", "dft", 0.0),
+                ("collect", 1, "sft"), ("train", "asft", 0.4),
+                ("collect", 2, "sft"),
+            ])
+            self.assertEqual([row["training_inner_loss"] for row in result], ["dft", "asft", None])
+            self.assertEqual(result[1]["training_objective"]["asft_normalization_semantics"], "update_weights_v1")
+            run_metadata = json.loads((root / "generations" / "schedule" / "run.json").read_text())
+            self.assertEqual(run_metadata["generations"][1]["training_objective"], result[1]["training_objective"])
+            self.assertEqual(config.training.inner_loss, "sft")
+            train.reset_mock()
+            events.clear()
+            run_loop(config, run_id="schedule", docker_client=MagicMock(), task=MagicMock())
+            train.assert_not_called()
+            config.training.strict_no_truncation = True
+            with self.assertRaisesRegex(ValueError, "strict_no_truncation.*fresh"):
+                run_loop(config, run_id="schedule", docker_client=MagicMock(), task=MagicMock())
+            train.assert_not_called()
+
+    def test_wandb_metadata_records_effective_task_settings_without_local_paths(self):
+        from scripts.run_train_loop import _build_wandb_metadata
+
+        config = self.make_config(Path("unused"))
+        task = MagicMock()
+        task.tracking_config.return_value = {"theta": 0.6, "max_rows_per_episode": 5}
+        metadata = _build_wandb_metadata(
+            config, identity_fields={"run_id": "run-123"}, source_generation_id=1,
+            generation_task=task, source_generation_summary={"success_rate": 0.5},
+            serving_lineage={"request_model": "/private/model", "backend": "vllm"},
+            hardware_tags=["gpu"], load_tags=[],
+        )
+        self.assertEqual(metadata["config"]["rollout"]["task"], {"theta": 0.6, "max_rows_per_episode": 5})
+        self.assertIsNone(metadata["config"]["rollout"]["serving"]["request_model"])
+        self.assertEqual(metadata["summary"], {"success_rate": 0.5})
+        self.assertEqual(metadata["run"]["name"], "nsl-test-loop-g1-finetune")
+
+        with patch("scripts.run_train_loop.subprocess.Popen") as popen:
+            from scripts.run_train_loop import _invoke_train_sft
+            popen.return_value = MagicMock(stdout=iter([]), wait=MagicMock(return_value=0))
+            config.training.wandb_project = "demo"
+            _invoke_train_sft(
+                config, training_paths=[], output_dir=Path("adapter"),
+                export_format="lora", wandb_metadata=metadata,
+            )
+        child_env = popen.call_args.kwargs["env"]
+        self.assertEqual(json.loads(child_env["NSL_WANDB_METADATA"]), metadata)
+        self.assertEqual(child_env["WANDB_RUN_GROUP"], "run-123")
 
     def test_generation_phase_requires_completion_marker(self) -> None:
         from scripts.run_train_loop import _generation_phase_complete
@@ -454,6 +629,40 @@ asft_normalize_by = "weights"
                 )
 
     @patch("scripts.run_train_loop.subprocess.Popen")
+    def test_invoke_train_sft_uses_output_path_not_successful_stdout(self, mock_popen):
+        from scripts.run_train_loop import _invoke_train_sft
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            config = self.make_config(root)
+            for stdout in ([], ["training complete\n", "wandb: upload finished\n"]):
+                with self.subTest(stdout=stdout):
+                    mock_popen.return_value = MagicMock(
+                        stdout=iter(stdout), wait=MagicMock(return_value=0)
+                    )
+                    self.assertEqual(
+                        _invoke_train_sft(
+                            config,
+                            training_paths=[root / "rows.jsonl"],
+                            output_dir=root / "adapter",
+                            export_format="lora",
+                        ),
+                        root / "adapter",
+                    )
+
+            mock_popen.return_value = MagicMock(
+                stdout=iter([str(root / "adapter")]),
+                wait=MagicMock(return_value=7),
+            )
+            with self.assertRaisesRegex(RuntimeError, "status 7"):
+                _invoke_train_sft(
+                    config,
+                    training_paths=[],
+                    output_dir=root / "adapter",
+                    export_format="lora",
+                )
+
+    @patch("scripts.run_train_loop.subprocess.Popen")
     def test_invoke_train_sft_passes_sft_and_rehearsal_flags(
         self,
         mock_popen: MagicMock,
@@ -536,7 +745,8 @@ asft_normalize_by = "weights"
             config.training.asft_streaming = "batch"
             config.training.asft_ref_microbatch_size = 2
             config.training.asft_seq_chunk_size = 128
-            config.training.asft_normalize_by = "weights"
+            config.training.asft_normalization_semantics = "microbatch_weights_v0"
+            config.training.strict_no_truncation = True
 
             proc = MagicMock()
             proc.stdout = iter([str(base_dir / "adapter") + "\n"])
@@ -567,8 +777,9 @@ asft_normalize_by = "weights"
         self.assertIn("2", cmd)
         self.assertIn("--asft-seq-chunk-size", cmd)
         self.assertIn("128", cmd)
-        self.assertIn("--asft-normalize-by", cmd)
-        self.assertIn("weights", cmd)
+        self.assertIn("--asft-normalization-semantics", cmd)
+        self.assertIn("microbatch_weights_v0", cmd)
+        self.assertIn("--strict-no-truncation", cmd)
 
         config.training.inner_loss = "sft"
         proc = MagicMock()

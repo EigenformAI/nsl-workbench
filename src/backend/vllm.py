@@ -24,12 +24,9 @@ from src.typing.config import AppConfig, _is_managed_vllm_endpoint
 
 from .session import BackendSession
 
-VLLM_IMAGE = "vllm/vllm-openai:nightly-01d4d1ad375dc5854779c593eee093bcebb0cada"
-# Pinned to the 2026-05-04 nightly because v0.20.1 (current `:latest`) was
-# branched from v0.20.0 on 2026-04-27 and never received the gemma4 PP fix
-# from PR #40786 (merged 2026-04-29). The fix replaces a broken
-# `intermediate_tensors.get("per_layer_inputs")` call (gemma4.py L1320 in
-# v0.20.1) with a subscript access.
+VLLM_IMAGE = "vllm/vllm-openai:v0.20.2"
+# Model-specific serving combinations still need separate qualification; the
+# previous nightly included a Gemma-4 pipeline-parallel fix (PR #40786).
 CONTAINER_NAME_PREFIX = "nsl-vllm"
 HF_CACHE_HOST = Path.home() / ".cache" / "huggingface"
 HF_CACHE_CONTAINER = "/tmp/huggingface"
@@ -393,12 +390,13 @@ def _build_vllm_config(
     config.max_tokens = requested_max_tokens
     config.frequency_penalty = app_config.inference.frequency_penalty
     config.presence_penalty = app_config.inference.presence_penalty
+    config.seed = app_config.inference.seed
     if app_config.vllm is not None and app_config.vllm.chat_template_path:
         chat_template_path = Path(app_config.vllm.chat_template_path)
         config.chat_template = chat_template_path.read_text(encoding="utf-8")
     if app_config.vllm is not None:
         if app_config.vllm.lora_adapter_path:
-            config.model = ADAPTER_MODEL_NAME
+            config.model = app_config.vllm.external_request_model or ADAPTER_MODEL_NAME
         elif app_config.vllm.served_model_name:
             config.model = app_config.vllm.served_model_name
         config.tool_call_parser = (
@@ -478,20 +476,44 @@ def _is_http_ready_with_auth(
         return False
 
 
-def _model_inventory_attests_lora(inventory: Any, requested_model: str) -> bool:
+def _model_inventory_attests_lora(
+    inventory: Any,
+    requested_model: str,
+    *,
+    expected_root: str | None = None,
+    expected_parent: str | None = None,
+) -> bool:
     cards = getattr(inventory, "data", None)
     if not isinstance(cards, list):
         return False
     matches = [card for card in cards if getattr(card, "id", None) == requested_model]
     if len(matches) != 1:
         return False
-    parent = getattr(matches[0], "parent", None)
-    return isinstance(parent, str) and bool(parent.strip())
+    card = matches[0]
+    parent = getattr(card, "parent", None)
+    if not isinstance(parent, str) or not parent.strip():
+        return False
+    if expected_root is not None and getattr(card, "root", None) != expected_root:
+        return False
+    if expected_parent is not None and parent != expected_parent:
+        return False
+    return True
 
 
-def _external_model_attestation(client: OpenAI, requested_model: str) -> bool:
+def _external_model_attestation(
+    client: OpenAI,
+    requested_model: str,
+    *,
+    expected_root: str | None = None,
+    expected_parent: str | None = None,
+) -> bool:
     try:
-        return _model_inventory_attests_lora(client.models.list(), requested_model)
+        return _model_inventory_attests_lora(
+            client.models.list(),
+            requested_model,
+            expected_root=expected_root,
+            expected_parent=expected_parent,
+        )
     except Exception as exc:
         logger.warning(f"Unable to inspect external vLLM model inventory: {exc}")
         return False
@@ -578,6 +600,8 @@ def _build_external_endpoint_pool_session(app_config: AppConfig) -> BackendSessi
     sessions_by_endpoint: dict[str, BackendSession] = {}
     ordered_sessions: list[BackendSession] = []
     requires_lora_attestation = bool(vllm_cfg.lora_adapter_path)
+    expected_root = vllm_cfg.expected_model_root
+    expected_parent = vllm_cfg.expected_model_parent
     attested_capacity = 0
     for index, endpoint_cfg in enumerate(vllm_cfg.endpoints):
         endpoint_id = endpoint_cfg.effective_id(index)
@@ -593,7 +617,12 @@ def _build_external_endpoint_pool_session(app_config: AppConfig) -> BackendSessi
         session.metrics_url = metrics_url
         transport_ready = _is_http_ready_with_auth(models_url, api_key=api_key)
         lora_attested = (
-            _external_model_attestation(client, config.model)
+            _external_model_attestation(
+                client,
+                config.model,
+                expected_root=expected_root,
+                expected_parent=expected_parent,
+            )
             if transport_ready
             else False
         )
@@ -620,7 +649,12 @@ def _build_external_endpoint_pool_session(app_config: AppConfig) -> BackendSessi
                 },
                 recovery_probe=(
                     lambda client=client, requested_model=config.model: (
-                        _external_model_attestation(client, requested_model)
+                        _external_model_attestation(
+                            client,
+                            requested_model,
+                            expected_root=expected_root,
+                            expected_parent=expected_parent,
+                        )
                     )
                 )
                 if requires_lora_attestation
@@ -650,7 +684,7 @@ def _build_external_endpoint_pool_session(app_config: AppConfig) -> BackendSessi
     ):
         raise RuntimeError(
             "External vLLM LoRA attestation failed: /models did not report the "
-            f"requested model {ADAPTER_MODEL_NAME!r} with a non-empty parent"
+            f"requested model {config.model!r} with the expected root and parent"
         )
 
     pool = EndpointPool(
@@ -1098,14 +1132,19 @@ def setup_vllm(
     if configured_external_endpoint and server_ready:
         client = OpenAI(api_key=api_key, base_url=base_url, timeout=config.timeout)
         lora_attested = (
-            _external_model_attestation(client, config.model)
+            _external_model_attestation(
+                client,
+                config.model,
+                expected_root=vllm_cfg.expected_model_root,
+                expected_parent=vllm_cfg.expected_model_parent,
+            )
             if lora_adapter_path
             else False
         )
         if lora_adapter_path and not lora_attested:
             raise RuntimeError(
                 "External vLLM LoRA attestation failed: /models did not report "
-                f"the requested model {config.model!r} with a non-empty parent"
+                f"the requested model {config.model!r} with the expected root and parent"
             )
         session = _build_vllm_session(client, config, base_url, models_url)
         session = _attach_endpoint_pool(
@@ -1119,7 +1158,12 @@ def setup_vllm(
             },
             external_lora_attested=True if lora_adapter_path else None,
             recovery_probe=(
-                lambda: _external_model_attestation(client, config.model)
+                lambda: _external_model_attestation(
+                    client,
+                    config.model,
+                    expected_root=vllm_cfg.expected_model_root,
+                    expected_parent=vllm_cfg.expected_model_parent,
+                )
             )
             if lora_adapter_path
             else None,

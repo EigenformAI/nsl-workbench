@@ -208,9 +208,18 @@ class CapabilityMcpBridge:
     emit the same paired recorder events.
     """
 
-    def __init__(self, ctx: "HarnessContext", token: str = "") -> None:
+    def __init__(
+        self,
+        ctx: "HarnessContext",
+        token: str = "",
+        *,
+        enforce_allowlist: bool = False,
+    ) -> None:
         self.ctx = ctx
         self.token = token
+        # Native workflow workers use their projected phase capabilities as a
+        # dispatch boundary. The flat loop still accepts synthetic invocations.
+        self.enforce_allowlist = enforce_allowlist
         self._port: int | None = None
         self._server_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -224,6 +233,18 @@ class CapabilityMcpBridge:
         structured error without logging action/observation events.
         """
         self._raise_if_cancelled(invocation.name)
+        if self.enforce_allowlist:
+            allowed = {cap.name for cap in self.ctx.prompt_spec.capabilities}
+            if invocation.name not in allowed:
+                return CapabilityResult(
+                    name=invocation.name,
+                    output={},
+                    success=False,
+                    error=(
+                        f"capability {invocation.name!r} not permitted in this "
+                        f"phase (allowed: {sorted(allowed)})"
+                    ),
+                )
         rejection = self._check_budget([invocation])
         if rejection is not None:
             return rejection

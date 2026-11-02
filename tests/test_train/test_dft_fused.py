@@ -1,4 +1,9 @@
+import importlib.util
+import os
+from pathlib import Path
+import subprocess
 import sys
+import textwrap
 import types
 import unittest
 from unittest.mock import patch
@@ -12,23 +17,13 @@ except Exception as exc:  # pragma: no cover - environment-dependent import guar
 else:
     TORCH_IMPORT_ERROR = None
 
-# Import cut_cross_entropy ONCE at module load. Importing it mid-process (e.g. lazily inside
-# install_fused_dft -> _cce_available during one test) re-triggers torch._inductor's TORCH_LIBRARY
-# registration and poisons later tests in the same process. In the real run Unsloth imports it
-# before our code, so this mirrors production. Guarded: it's CUDA/Triton-only.
-try:  # pragma: no cover - environment-dependent
-    import cut_cross_entropy  # noqa: F401
-except Exception:
-    pass
-
-
 IGNORE_INDEX = -100
 
 
-def _shift_labels(labels):
+def _shift_labels(labels, ignore_index=IGNORE_INDEX):
     shifted = torch.empty_like(labels)
     shifted[..., :-1] = labels[..., 1:]
-    shifted[..., -1] = IGNORE_INDEX
+    shifted[..., -1] = ignore_index
     return shifted
 
 
@@ -68,7 +63,59 @@ def _reference_nll_loss(hidden, weight, bias, labels, *, n_items=None, softcap=3
     return loss / n_items if n_items is not None else loss
 
 
+def _oracle_dft_loss(
+    hidden,
+    weight,
+    bias,
+    labels,
+    *,
+    shift_labels=False,
+    ignore_index=IGNORE_INDEX,
+    n_items=None,
+    scaling=1.0,
+    multiply=None,
+    divide=None,
+    softcap=None,
+    detach_weights=True,
+):
+    """Independent oracle: select valid rows before matmul, then logsumexp/gather."""
+    targets = _shift_labels(labels, ignore_index) if shift_labels else labels
+    targets = targets.reshape(-1)
+    valid = targets != ignore_index
+    logits = hidden.reshape(-1, hidden.shape[-1])[valid].to(weight.dtype) @ weight.t()
+    if bias is not None:
+        logits = logits + bias
+    if multiply:
+        logits = logits * multiply
+    if divide:
+        logits = logits / divide
+    if softcap:
+        logits = softcap * torch.tanh(logits / softcap)
+    logits = logits.float()
+    target_logits = logits.gather(1, targets[valid, None]).squeeze(1)
+    ce = torch.logsumexp(logits, dim=1) - target_logits
+    weights = torch.exp(-ce)
+    if detach_weights:
+        weights = weights.detach()
+    denominator = max(int(valid.sum()), 1) if n_items is None else n_items
+    denominator = torch.as_tensor(denominator, device=logits.device).reshape(-1)[0]
+    if denominator == 0:
+        denominator = 1
+    return (weights * ce).sum() / denominator * scaling
+
+
 class TestFusedDftInstall(unittest.TestCase):
+    def setUp(self):
+        from src.train import dft_fused
+
+        self.enterContext(patch.dict(os.environ))
+        for name, value in (
+            ("_ORIGINAL_COMPUTE_FUSED_CE_LOSS", None),
+            ("_ORIGINAL_UNSLOTH_FUSED_CE_LOSS", None),
+            ("_DEFAULT_IGNORE_INDEX", IGNORE_INDEX),
+        ):
+            self.enterContext(patch.object(dft_fused, name, value))
+
     def test_install_fused_dft_patches_both_unsloth_symbols(self):
         from src.train.dft_fused import (
             compute_fused_dft_loss,
@@ -98,12 +145,115 @@ class TestFusedDftInstall(unittest.TestCase):
             },
         ):
             install_fused_dft()
-            # Fast path (CCE) replaces unsloth_fused_ce_loss; dense fallback replaces the inner fn.
+            # Model forwards retain the stock wrapper, with its inner objective replaced by DFT.
             self.assertIs(ce_mod.unsloth_fused_ce_loss, unsloth_fused_dft_loss)
             self.assertIs(ce_mod.compute_fused_ce_loss, compute_fused_dft_loss)
             install_fused_dft()  # idempotent
             self.assertIs(ce_mod.unsloth_fused_ce_loss, unsloth_fused_dft_loss)
             self.assertIs(ce_mod.compute_fused_ce_loss, compute_fused_dft_loss)
+
+    @unittest.skipIf(torch is None, f"torch unavailable: {TORCH_IMPORT_ERROR}")
+    def test_generated_model_routes_to_dft_after_repeated_install(self):
+        from src.train import dft_fused
+
+        ce_mod = types.ModuleType("unsloth_zoo.fused_losses.cross_entropy_loss")
+
+        def original_compute(*_args, **_kwargs):
+            raise AssertionError("must not execute the original NLL objective")
+
+        def original_wrapper(trainer, hidden, weight, bias, labels, **kwargs):
+            return ce_mod.compute_fused_ce_loss(
+                hidden,
+                weight,
+                bias,
+                labels,
+                n_items=kwargs["n_items"],
+                scaling=kwargs["scaling"],
+            )[0]
+
+        ce_mod.compute_fused_ce_loss = original_compute
+        ce_mod.unsloth_fused_ce_loss = original_wrapper
+        generated = types.ModuleType("unsloth_compiled_module_dft_regression")
+        generated.compute_fused_ce_loss = original_compute
+        generated.unsloth_fused_ce_loss = original_wrapper
+        with patch.dict(
+            sys.modules,
+            {
+                "unsloth_zoo.fused_losses.cross_entropy_loss": ce_mod,
+                generated.__name__: generated,
+            },
+        ):
+            dft_fused.install_fused_dft()
+            dft_fused.install_fused_dft()
+            self.assertEqual(dft_fused._repatch_generated_modules(), 0)
+        # Do not evict modules lazily imported by autograd when restoring sys.modules.
+        torch.manual_seed(23)
+        hidden = torch.randn(1, 5, 3, requires_grad=True)
+        weight = torch.randn(7, 3, requires_grad=True)
+        labels = torch.tensor([[1, 2, IGNORE_INDEX, 4, 5]])
+        candidate = generated.unsloth_fused_ce_loss(
+            None, hidden, weight, None, labels
+        )
+        expected = _oracle_dft_loss(
+            hidden, weight, None, labels, shift_labels=True
+        )
+        torch.testing.assert_close(candidate, expected)
+        actual_grads = torch.autograd.grad(candidate, (hidden, weight))
+        expected_grads = torch.autograd.grad(expected, (hidden, weight))
+        for actual, expected in zip(actual_grads, expected_grads):
+            torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+        inner, _ = generated.compute_fused_ce_loss(
+            hidden, weight, None, labels
+        )
+        torch.testing.assert_close(inner, candidate)
+
+    def test_missing_inner_loss_seam_fails_installation(self):
+        from src.train import dft_fused
+
+        ce_mod = types.ModuleType("unsloth_zoo.fused_losses.cross_entropy_loss")
+        ce_mod.unsloth_fused_ce_loss = lambda *_args, **_kwargs: None
+        with patch.dict(
+            sys.modules, {"unsloth_zoo.fused_losses.cross_entropy_loss": ce_mod}
+        ):
+            with self.assertRaises(AttributeError):
+                dft_fused.install_fused_dft()
+
+    @unittest.skipIf(torch is None, f"torch unavailable: {TORCH_IMPORT_ERROR}")
+    def test_chunk_default_environment_and_explicit_override(self):
+        from src.train import dft_fused
+
+        ce_mod = types.ModuleType("unsloth_zoo.fused_losses.cross_entropy_loss")
+        received_chunks = []
+
+        def original_wrapper(*_args, **kwargs):
+            # Match the stock wrapper's import-time environment override.
+            if ce_mod.N_CHUNKS:
+                kwargs["n_chunks"] = int(ce_mod.N_CHUNKS)
+            received_chunks.append(kwargs.get("n_chunks"))
+            return 0
+
+        ce_mod.compute_fused_ce_loss = lambda *_args, **_kwargs: None
+        ce_mod.unsloth_fused_ce_loss = original_wrapper
+        os.environ.pop("UNSLOTH_CE_LOSS_TARGET_GB", None)
+        with patch.dict(
+            sys.modules, {"unsloth_zoo.fused_losses.cross_entropy_loss": ce_mod}
+        ):
+            for configured, expected in ((None, 16), ("7", 7)):
+                with self.subTest(configured=configured):
+                    if configured is None:
+                        os.environ.pop("UNSLOTH_CE_LOSS_N_CHUNKS", None)
+                    else:
+                        os.environ["UNSLOTH_CE_LOSS_N_CHUNKS"] = configured
+                    ce_mod.N_CHUNKS = configured
+                    dft_fused.install_fused_dft()
+                    args = (None, None, None, None, torch.tensor([[1, 2]]))
+                    dft_fused.unsloth_fused_dft_loss(*args)
+                    dft_fused.unsloth_fused_dft_loss(*args, n_chunks=2)
+                    dft_fused.unsloth_fused_dft_loss(*args, target_gb=1.5)
+                    self.assertEqual(received_chunks[-3:], [expected, 2, None])
+                    self.assertEqual(
+                        os.environ["UNSLOTH_CE_LOSS_N_CHUNKS"], str(expected)
+                    )
 
 
 @unittest.skipIf(torch is None, f"torch unavailable: {TORCH_IMPORT_ERROR}")
@@ -295,86 +445,414 @@ class TestFusedDftLoss(unittest.TestCase):
             torch.allclose(loss.detach(), changed_loss.detach(), rtol=1e-6, atol=1e-7)
         )
 
+    def test_noncontiguous_labels_match_independent_value_and_gradient_oracle(self):
+        from src.train.dft_fused import compute_fused_dft_loss
 
-def _cce_cuda_available() -> bool:
-    if torch is None or not torch.cuda.is_available():
-        return False
-    try:
-        from triton.runtime import driver
+        hidden, weight, bias, labels, _ = self._inputs()
+        labels = labels.t().contiguous().t()
+        self.assertFalse(labels.is_contiguous())
+        candidate, _ = compute_fused_dft_loss(
+            hidden, weight, bias, labels, shift_labels=False
+        )
+        expected = _oracle_dft_loss(hidden, weight, bias, labels)
+        torch.testing.assert_close(candidate, expected)
+        actual_grads = torch.autograd.grad(candidate, (hidden, weight, bias))
+        expected_grads = torch.autograd.grad(expected, (hidden, weight, bias))
+        for actual, expected in zip(actual_grads, expected_grads):
+            torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
 
-        driver.active.get_current_device()
-    except Exception:
-        return False
-    return True
+    def test_zero_denominator_matches_unit_denominator_oracle(self):
+        from src.train.dft_fused import compute_fused_dft_loss
+
+        for denominator in (0, torch.tensor(0), torch.tensor([0, 9])):
+            with self.subTest(denominator=denominator):
+                hidden, weight, bias, labels, _ = self._inputs()
+                candidate, _ = compute_fused_dft_loss(
+                    hidden, weight, bias, labels, n_items=denominator, shift_labels=False
+                )
+                expected = _oracle_dft_loss(hidden, weight, bias, labels, n_items=1)
+                torch.testing.assert_close(candidate, expected)
+                actual_grads = torch.autograd.grad(candidate, (hidden, weight, bias))
+                expected_grads = torch.autograd.grad(expected, (hidden, weight, bias))
+                for actual, expected in zip(actual_grads, expected_grads):
+                    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+
+    def test_ignored_overflowed_logits_match_valid_row_oracle(self):
+        from src.train.dft_fused import compute_fused_dft_loss
+
+        largest = torch.finfo(torch.float32).max
+        for softcap in (None, 1.0):
+            with self.subTest(softcap=softcap):
+                hidden = torch.tensor(
+                    [[[0.2, -0.1], [largest, largest]]], requires_grad=True
+                )
+                weight = torch.tensor(
+                    [[0.3, -0.1], [2.0, -2.0], [-2.0, 2.0]], requires_grad=True
+                )
+                bias = torch.tensor([0.1, -0.2, 0.3], requires_grad=True)
+                labels = torch.tensor([[1, IGNORE_INDEX]])
+                raw_logits = torch.nn.functional.linear(hidden, weight, bias)
+                self.assertFalse(torch.isfinite(raw_logits[0, 1]).all())
+                candidate, _ = compute_fused_dft_loss(
+                    hidden,
+                    weight,
+                    bias,
+                    labels,
+                    shift_labels=False,
+                    logit_softcapping=softcap,
+                )
+                expected = _oracle_dft_loss(hidden, weight, bias, labels, softcap=softcap)
+                torch.testing.assert_close(candidate, expected)
+                actual_grads = torch.autograd.grad(candidate, (hidden, weight, bias))
+                expected_grads = torch.autograd.grad(expected, (hidden, weight, bias))
+                for actual, expected in zip(actual_grads, expected_grads):
+                    self.assertTrue(torch.isfinite(actual).all())
+                    torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+
+    def test_rejects_label_smoothing(self):
+        from src.train.dft_fused import compute_fused_dft_loss
+
+        hidden, weight, bias, labels, _ = self._inputs()
+        with self.assertRaisesRegex(ValueError, "label_smoothing"):
+            compute_fused_dft_loss(
+                hidden, weight, bias, labels, label_smoothing=0.1
+            )
+
+    def test_scaling_transforms_and_detached_weighting_under_functorch(self):
+        from src.train.dft_fused import compute_fused_dft_loss
+
+        hidden, weight, bias, labels, _ = self._inputs()
+        (actual_grads, (actual, (unscaled,))) = torch.func.grad_and_value(
+            compute_fused_dft_loss, argnums=(0, 1, 2), has_aux=True
+        )(
+            hidden,
+            weight,
+            bias,
+            labels,
+            n_items=19,
+            scaling=8.0,
+            shift_labels=True,
+            logit_scale_multiply=1.5,
+            logit_scale_divide=2.0,
+            logit_softcapping=1.25,
+        )
+        oracle_args = dict(
+            shift_labels=True, n_items=19, scaling=8.0,
+            multiply=1.5, divide=2.0, softcap=1.25,
+        )
+        expected = _oracle_dft_loss(hidden, weight, bias, labels, **oracle_args)
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(unscaled, expected.detach() / 8.0)
+        self.assertFalse(unscaled.requires_grad)
+        expected_grads = torch.autograd.grad(expected, (hidden, weight, bias))
+        for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+            torch.testing.assert_close(actual_grad, expected_grad, rtol=1e-5, atol=1e-6)
+
+        # The same forward value with trainable weights is a credible wrong objective.
+        wrong = _oracle_dft_loss(
+            hidden, weight, bias, labels, detach_weights=False, **oracle_args
+        )
+        wrong_grad = torch.autograd.grad(wrong, hidden)[0]
+        self.assertFalse(torch.allclose(actual_grads[0], wrong_grad))
+
+    def test_all_ignored_rows_have_zero_value_and_gradients(self):
+        from src.train.dft_fused import compute_fused_dft_loss
+
+        for denominator in (None, 0):
+            with self.subTest(denominator=denominator):
+                hidden, weight, bias, labels, _ = self._inputs()
+                labels.fill_(IGNORE_INDEX)
+                loss, (unscaled,) = compute_fused_dft_loss(
+                    hidden, weight, bias, labels,
+                    n_items=denominator, scaling=8.0,
+                )
+                self.assertEqual(loss.item(), 0.0)
+                self.assertEqual(unscaled.item(), 0.0)
+                for gradient in torch.autograd.grad(loss, (hidden, weight, bias)):
+                    self.assertTrue(torch.isfinite(gradient).all())
+                    self.assertEqual(torch.count_nonzero(gradient).item(), 0)
 
 
-@unittest.skipIf(
-    not _cce_cuda_available(),
-    "CUDA + cut_cross_entropy required for the fused CCE path",
-)
-class TestUnslothFusedDftLossCCE(unittest.TestCase):
-    """The fast path: unsloth_fused_dft_loss runs CCE under NORMAL autograd (not functorch).
+@unittest.skipIf(torch is None, f"torch unavailable: {TORCH_IMPORT_ERROR}")
+class TestUnslothFusedDftLossRouting(unittest.TestCase):
+    def test_delegates_mask_scaling_and_compilation_controls(self):
+        from src.train import dft_fused
 
-    cut_cross_entropy is CUDA/Triton-only, so this is gated. It asserts the CCE-DFT gradient
-    equals the dense full-logit DFT reference AND differs from NLL — the same guard as the
-    dense path, on the path we actually run for speed.
-    """
-
-    def test_cce_fast_path_matches_dense_dft_and_differs_from_nll(self):
-        from src.train.dft_fused import unsloth_fused_dft_loss
-
-        dev = "cuda"
-        torch.manual_seed(11)
-        N, V, D = 256, 2048, 64
-        hidden = torch.randn(1, N, D, device=dev, dtype=torch.bfloat16)
-        weight = torch.randn(V, D, device=dev, dtype=torch.bfloat16) * 0.1
-        labels = torch.randint(0, V, (1, N), device=dev, dtype=torch.long)
-        labels[0, 5] = IGNORE_INDEX
-        labels[0, 100] = IGNORE_INDEX
-        shifted = _shift_labels(labels)
-        n_items = (shifted.view(-1) != IGNORE_INDEX).sum().to(torch.float32)
-
-        h = hidden.clone().requires_grad_(True)
-        loss = unsloth_fused_dft_loss(
-            None,
-            h,
+        original = unittest.mock.Mock(return_value=torch.tensor(0.25))
+        hidden = torch.randn(1, 3, 4, dtype=torch.bfloat16)
+        weight = torch.randn(7, 4, dtype=torch.bfloat16)
+        labels = torch.tensor([[1, 2, 3]])
+        mask = torch.tensor([[1, 1, 0]])
+        trainer = object()
+        with patch.object(dft_fused, "_ORIGINAL_UNSLOTH_FUSED_CE_LOSS", original):
+            loss = dft_fused.unsloth_fused_dft_loss(
+                trainer,
+                hidden,
+                weight,
+                None,
+                labels,
+                mask=mask,
+                n_items=7,
+                scaling=8.0,
+                target_gb=2.0,
+                torch_compile=True,
+                overwrite=True,
+                n_chunks=4,
+                logit_softcapping=1.0,
+            )
+        self.assertEqual(loss.item(), 0.25)
+        forwarded_denominator = original.call_args.kwargs["n_items"]
+        self.assertIsInstance(forwarded_denominator, torch.Tensor)
+        self.assertEqual(forwarded_denominator.dtype, torch.float32)
+        self.assertEqual(forwarded_denominator.device, weight.device)
+        self.assertEqual(forwarded_denominator.item(), 7)
+        original.assert_called_once_with(
+            trainer,
+            hidden,
             weight,
             None,
             labels,
-            n_items=n_items,
-            shift_labels=True,
-            logit_softcapping=30.0,
-            ignore_index=IGNORE_INDEX,
+            mask=mask,
+            n_items=forwarded_denominator,
+            scaling=8.0,
+            target_gb=2.0,
+            torch_compile=True,
+            overwrite=True,
+            n_chunks=4,
+            logit_softcapping=1.0,
         )
-        loss.backward()
-        g_cce = h.grad.float().clone()
 
-        hr = hidden.float().clone().requires_grad_(True)
-        logits = torch.tanh((hr.view(-1, D) @ weight.float().t()) / 30.0) * 30.0
-        ce = torch.nn.functional.cross_entropy(
-            logits, shifted.view(-1), reduction="none", ignore_index=IGNORE_INDEX
-        )
-        loss_ref = ((-ce).exp().detach() * ce).sum() / n_items
-        loss_ref.backward()
-        g_ref = hr.grad.float().view_as(g_cce)
+    def test_public_loss_rejects_smoothing_before_wrapper_dispatch(self):
+        from src.train import dft_fused
 
-        hn = hidden.float().clone().requires_grad_(True)
-        ln = torch.tanh((hn.view(-1, D) @ weight.float().t()) / 30.0) * 30.0
-        nll = (
-            torch.nn.functional.cross_entropy(
-                ln, shifted.view(-1), reduction="sum", ignore_index=IGNORE_INDEX
-            )
-            / n_items
-        )
-        nll.backward()
-        g_nll = hn.grad.float().view_as(g_cce)
+        original = unittest.mock.Mock()
+        with patch.object(dft_fused, "_ORIGINAL_UNSLOTH_FUSED_CE_LOSS", original):
+            with self.assertRaisesRegex(ValueError, "label_smoothing"):
+                dft_fused.unsloth_fused_dft_loss(
+                    None, None, None, None, None, label_smoothing=0.1
+                )
+        original.assert_not_called()
 
-        scale = g_ref.abs().max().clamp_min(1e-12).item()
-        self.assertTrue(
-            torch.allclose(loss.float(), loss_ref.float(), rtol=2e-2, atol=1e-4)
+    def test_missing_installation_fails_instead_of_using_nll(self):
+        from src.train import dft_fused
+
+        with patch.object(dft_fused, "_ORIGINAL_UNSLOTH_FUSED_CE_LOSS", None):
+            with self.assertRaisesRegex(RuntimeError, "install_fused_dft"):
+                dft_fused.unsloth_fused_dft_loss(None, None, None, None, None)
+
+    def test_public_wrapper_rejects_unshifted_labels_instead_of_silent_shift(self):
+        from src.train import dft_fused
+
+        original = unittest.mock.Mock()
+        with patch.object(dft_fused, "_ORIGINAL_UNSLOTH_FUSED_CE_LOSS", original):
+            with self.assertRaisesRegex(ValueError, "causal shift_labels=True"):
+                dft_fused.unsloth_fused_dft_loss(
+                    None, None, None, None, None, shift_labels=False
+                )
+        original.assert_not_called()
+
+
+@unittest.skipUnless(
+    torch is not None
+    and torch.cuda.is_available()
+    and importlib.util.find_spec("unsloth") is not None,
+    "CUDA and the installed Unsloth stack are required",
+)
+class TestFusedDftCUDA(unittest.TestCase):
+    def test_compiled_stock_wrapper_matches_independent_oracle(self):
+        # Unsloth's process-wide patches must not leak into the rest of the unit suite.
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                textwrap.dedent("""\
+                    import os
+                    import sys
+                    os.environ['UNSLOTH_ENABLE_CCE'] = '0'
+                    os.environ['UNSLOTH_CE_LOSS_N_CHUNKS'] = '7'
+                    import unsloth
+                    import torch
+                    from unittest.mock import patch
+                    import unsloth_zoo.fused_losses.cross_entropy_loss as ce_mod
+                    from src.train import dft_fused
+                    sys.path.insert(0, 'tests/test_train')
+                    from test_dft_fused import _oracle_dft_loss
+
+                    dft_fused.install_fused_dft()
+                    torch.manual_seed(31)
+                    hidden = torch.randn(2, 8, 5, device='cuda', requires_grad=True)
+                    weight = torch.randn(13, 5, device='cuda', requires_grad=True)
+                    bias = torch.randn(13, device='cuda', requires_grad=True)
+                    labels = torch.randint(0, 13, (2, 8), device='cuda')
+                    labels[:, 3] = -100
+                    labels = labels.t().contiguous().t()
+                    actual = dft_fused.unsloth_fused_dft_loss(
+                        None, hidden, weight, bias, labels,
+                        shift_labels=True,
+                        scaling=8.0, n_items=torch.tensor(11, device='cuda'),
+                        n_chunks=2, torch_compile=True,
+                        logit_scale_multiply=1.5, logit_scale_divide=2.0,
+                        logit_softcapping=1.25,
+                    )
+                    expected = _oracle_dft_loss(
+                        hidden, weight, bias, labels, shift_labels=True,
+                        n_items=11, multiply=1.5, divide=2.0, softcap=1.25,
+                    )
+                    torch.testing.assert_close(actual, expected)
+                    actual_grads = torch.autograd.grad(actual, (hidden, weight, bias))
+                    expected_grads = torch.autograd.grad(expected * 8.0, (hidden, weight, bias))
+                    for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+                        torch.testing.assert_close(actual_grad, expected_grad, rtol=2e-5, atol=1e-6)
+
+                    mask = torch.ones_like(labels)
+                    mask[:, 5] = 0
+                    with patch.object(torch, 'chunk', wraps=torch.chunk) as chunk:
+                        masked = dft_fused.unsloth_fused_dft_loss(
+                            None, hidden, weight, bias, labels,
+                            mask=mask, n_chunks=2, torch_compile=False,
+                        )
+                    assert chunk.call_count == 3
+                    assert all(call.args[1] == 2 for call in chunk.call_args_list), 'environment overrode explicit chunks'
+                    expected_masked = _oracle_dft_loss(
+                        hidden, weight, bias, labels.masked_fill(mask == 0, -100),
+                        shift_labels=True,
+                    )
+                    torch.testing.assert_close(masked, expected_masked)
+                    for actual_grad, expected_grad in zip(
+                        torch.autograd.grad(masked, (hidden, weight, bias)),
+                        torch.autograd.grad(expected_masked, (hidden, weight, bias)),
+                    ):
+                        torch.testing.assert_close(actual_grad, expected_grad, rtol=2e-5, atol=1e-6)
+
+                    zero = dft_fused.unsloth_fused_dft_loss(
+                        None, hidden, weight, bias, torch.full_like(labels, -100),
+                        n_items=0, n_chunks=2, torch_compile=True,
+                    )
+                    assert zero.item() == 0.0
+                    for grad in torch.autograd.grad(zero, (hidden, weight, bias)):
+                        assert torch.count_nonzero(grad).item() == 0
+
+                    largest = torch.finfo(torch.float32).max
+                    overflow_hidden = torch.tensor(
+                        [[[0.2, -0.1], [largest, largest]]],
+                        device='cuda', requires_grad=True,
+                    )
+                    overflow_weight = torch.tensor(
+                        [[0.3, -0.1], [2.0, -2.0], [-2.0, 2.0]],
+                        device='cuda', requires_grad=True,
+                    )
+                    overflow_labels = torch.tensor([[0, 1]], device='cuda')
+                    assert not torch.isfinite(
+                        torch.nn.functional.linear(overflow_hidden, overflow_weight)[0, 1]
+                    ).all()
+                    overflow_loss = dft_fused.unsloth_fused_dft_loss(
+                        None, overflow_hidden, overflow_weight, None, overflow_labels,
+                        n_chunks=1, torch_compile=True, logit_softcapping=1.0,
+                    )
+                    overflow_expected = _oracle_dft_loss(
+                        overflow_hidden, overflow_weight, None, overflow_labels,
+                        shift_labels=True, softcap=1.0,
+                    )
+                    torch.testing.assert_close(overflow_loss, overflow_expected)
+                    for actual_grad, expected_grad in zip(
+                        torch.autograd.grad(overflow_loss, (overflow_hidden, overflow_weight)),
+                        torch.autograd.grad(overflow_expected, (overflow_hidden, overflow_weight)),
+                    ):
+                        assert torch.isfinite(actual_grad).all()
+                        torch.testing.assert_close(actual_grad, expected_grad, rtol=2e-5, atol=1e-6)
+
+                    bf_hidden = hidden.detach().to(torch.bfloat16).requires_grad_(True)
+                    bf_weight = weight.detach().to(torch.bfloat16)
+                    bf_loss = dft_fused.unsloth_fused_dft_loss(
+                        None, bf_hidden, bf_weight, None, labels,
+                        n_chunks=2, torch_compile=True,
+                    )
+                    bf_expected = _oracle_dft_loss(
+                        bf_hidden, bf_weight, None, labels, shift_labels=True,
+                    )
+                    torch.testing.assert_close(bf_loss, bf_expected, rtol=2e-2, atol=1e-4)
+                    torch.testing.assert_close(
+                        torch.autograd.grad(bf_loss, bf_hidden)[0],
+                        torch.autograd.grad(bf_expected, bf_hidden)[0],
+                        rtol=2e-2, atol=1e-4,
+                    )
+                    assert ce_mod._FUSED_CE_COMPILE_SUPPORTED is True, 'Unsloth fell back to eager execution'
+                    print('CUDA compiled stock-wrapper DFT: transforms, mask, chunks, zero, overflow, bf16; scaled gradients match oracle')
+                """),
+            ],
+            cwd=Path(__file__).resolve().parents[2],
+            text=True,
+            capture_output=True,
+            timeout=180,
         )
-        self.assertLess((g_cce - g_ref).abs().max().item(), max(3e-2 * scale, 1e-4))
-        self.assertGreater((g_cce - g_nll).abs().max().item(), 1e-2 * scale)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("scaled gradients match oracle", result.stdout)
+
+    def test_custom_ignore_indices_match_independent_value_and_gradient_oracle(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                textwrap.dedent("""\
+                    import os
+                    import sys
+                    os.environ['UNSLOTH_ENABLE_CCE'] = '0'
+                    import unsloth
+                    import torch
+                    import unsloth_zoo.fused_losses.cross_entropy_loss as ce_mod
+                    from src.train import dft_fused
+                    sys.path.insert(0, 'tests/test_train')
+                    from test_dft_fused import _oracle_dft_loss
+
+                    cases = 0
+                    for device in ('cpu', 'cuda'):
+                        for installed_ignore in (-7, 0):
+                            dft_fused.install_fused_dft(ignore_index=installed_ignore)
+                            for override in (None, -9, -100):
+                                ignore = installed_ignore if override is None else override
+                                torch.manual_seed(41)
+                                hidden = torch.randn(2, 6, 3, device=device, requires_grad=True)
+                                weight = torch.randn(5, 3, device=device, requires_grad=True)
+                                bias = torch.randn(5, device=device, requires_grad=True)
+                                labels = torch.tensor(
+                                    [[0, 1, 2, 3, 4, 1], [2, 3, 4, 1, 0, 2]], device=device,
+                                )
+                                labels[:, 2] = ignore
+                                mask = torch.ones_like(labels)
+                                mask[:, 4] = 0
+                                kwargs = {} if override is None else dict(ignore_index=override)
+                                denominator = None if override is None else 9
+                                actual = dft_fused.unsloth_fused_dft_loss(
+                                    None, hidden, weight, bias, labels, mask=mask,
+                                    n_items=denominator, scaling=4.0, n_chunks=2,
+                                    torch_compile=(device == 'cuda'),
+                                    logit_scale_multiply=1.5, logit_softcapping=2.0,
+                                    **kwargs,
+                                )
+                                expected = _oracle_dft_loss(
+                                    hidden, weight, bias, labels.masked_fill(mask == 0, ignore),
+                                    shift_labels=True, ignore_index=ignore, n_items=denominator,
+                                    multiply=1.5, softcap=2.0,
+                                )
+                                torch.testing.assert_close(actual, expected)
+                                for actual_grad, expected_grad in zip(
+                                    torch.autograd.grad(actual, (hidden, weight, bias)),
+                                    torch.autograd.grad(expected * 4.0, (hidden, weight, bias)),
+                                ):
+                                    assert torch.isfinite(actual_grad).all()
+                                    torch.testing.assert_close(actual_grad, expected_grad, rtol=2e-5, atol=1e-6)
+                                cases += 1
+                    assert ce_mod._FUSED_CE_COMPILE_SUPPORTED is True, 'Unsloth fell back to eager execution'
+                    print(f'custom-ignore stock-wrapper oracle: {cases} CPU/CUDA cases passed')
+                """),
+            ],
+            cwd=Path(__file__).resolve().parents[2],
+            text=True,
+            capture_output=True,
+            timeout=180,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("12 CPU/CUDA cases passed", result.stdout)
 
 
 if __name__ == "__main__":

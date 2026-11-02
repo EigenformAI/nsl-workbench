@@ -52,6 +52,7 @@ def _build_llama_config(
     config.max_tokens = app_config.inference.max_tokens
     config.frequency_penalty = app_config.inference.frequency_penalty
     config.presence_penalty = app_config.inference.presence_penalty
+    config.seed = app_config.inference.seed
     if app_config.llama is not None:
         if app_config.llama.n_gpu_layers is not None:
             config.n_gpu_layers = app_config.llama.n_gpu_layers

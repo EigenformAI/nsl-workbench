@@ -36,6 +36,7 @@ def setup_openrouter(app_config: AppConfig) -> Iterator[BackendSession]:
         temperature=app_config.inference.temperature,
         frequency_penalty=app_config.inference.frequency_penalty,
         presence_penalty=app_config.inference.presence_penalty,
+        seed=app_config.inference.seed,
         enable_auto_tool_choice=True,
     )
     client = OpenAI(

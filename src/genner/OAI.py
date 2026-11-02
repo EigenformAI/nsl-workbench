@@ -186,6 +186,9 @@ class OAIGenner(Genner):
             presence_penalty = getattr(self.config, "presence_penalty", None)
             if presence_penalty is not None:
                 extra_kwargs["presence_penalty"] = presence_penalty
+            seed = getattr(self.config, "seed", None)
+            if seed is not None:
+                extra_kwargs["seed"] = seed
             if tools is not None:
                 extra_kwargs["tools"] = _normalize_tools(tools)
             if tool_choice is not None:

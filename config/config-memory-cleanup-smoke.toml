@@ -1,0 +1,53 @@
+model_name = "llama:.model-cache/materials-base/initial.gguf"
+code_host_cache_path = "./code/cleanup-native-smoke"
+container_ids = ["special-learn-compose_service-a_1"]
+dynamic_container = true
+docker_compose_dir = "./docker/special-learn-compose"
+train_data_save_folder = "./data/cleanup-native-smoke/train-data"
+
+[inference]
+temperature = 0.5
+timeout = 300
+max_tokens = 4096
+seed = 0
+
+[llama]
+startup_timeout = 2400
+n_gpu_layers = -1
+ctx_size = 65536
+cache_type_k = "q4_0"
+cache_type_v = "q4_0"
+flash_attention = true
+parallel_slots = 1
+
+[task]
+class = "tasks.memory_cleanup.MemoryCleanupTask"
+
+[task.config]
+docker_compose_dir = "./docker/special-learn-compose"
+theta = 0.05
+theta_schedule = "constant"
+
+[harness]
+name = "orchestrator_modes"
+
+[harness.orchestrator_modes]
+max_harness_iterations = 12
+scratchpad_max_chars = 32000
+# Workflow episodes use task-owned phase prompts rather than flat-loop modes.
+orchestrator_prompt = "Follow the task workflow. Budget: {budget_remaining}/{total_budget}.\n{scratchpad_content}"
+
+[generation]
+target_training_rows = 1
+max_episodes = 1
+parallel_episodes = 1
+variation_strategy = "round_robin"
+checkpoint_every_episode = true
+resume_from_checkpoint = false
+generation_output_dir = "./data/cleanup-native-smoke/generations"
+
+[observability]
+enabled = true
+record_inference = true
+record_phases = true
+record_resources = true
