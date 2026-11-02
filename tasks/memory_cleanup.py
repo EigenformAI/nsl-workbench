@@ -14,7 +14,6 @@ Extracted from the original hardcoded task logic in:
 import re
 import secrets
 import shlex
-import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -44,6 +43,11 @@ from src.task.types import (
 )
 from src.training_data.transforms import PerEpisodeRowCap, TrainingDataTransform
 from tasks.common.agent_exec import run_python_in_agent
+from tasks.common.container_exec import (
+    EXEC_TIMEOUT_S as _EXEC_TIMEOUT_S,
+    coerce_exec_result as _coerce_exec_result,
+    exec_run_with_timeout,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +116,9 @@ class MemoryCleanupState:
 
 
 # ---------------------------------------------------------------------------
-# Docker exec timeout helper (absorbed from container.py)
+# Measurement execution policy
 # ---------------------------------------------------------------------------
 
-_EXEC_TIMEOUT_S = 120
 _MEASUREMENT_ATTEMPTS = 3
 _MEASUREMENT_RETRY_BACKOFF_S = 0.25
 _INTEGRITY_ANCHORS = (
@@ -142,39 +145,7 @@ def _exec_run_with_timeout(
     is *scored* as a viability failure rather than crashing the measurement.
     """
     kwargs.setdefault("workdir", "/")
-    result: list[Any] = [None]
-    exception: list[BaseException | None] = [None]
-
-    def _run() -> None:
-        try:
-            result[0] = container.exec_run(cmd, **kwargs)
-        except BaseException as exc:
-            exception[0] = exc
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(timeout=timeout_s)
-    if t.is_alive():
-        raise TaskEnvironmentError(
-            f"Docker exec timed out after {timeout_s}s on "
-            f"{container.name or container.id}: {cmd}",
-            container_ids=[container.id] if container.id else None,
-        )
-    if exception[0] is not None:
-        raise exception[0]
-    return result[0]
-
-
-def _coerce_exec_result(exec_result: Any) -> tuple[int, bytes]:
-    if hasattr(exec_result, "exit_code") and hasattr(exec_result, "output"):
-        exit_code = exec_result.exit_code if exec_result.exit_code is not None else -1
-        output = exec_result.output if exec_result.output is not None else b""
-        return int(exit_code), bytes(output)
-    if isinstance(exec_result, tuple) and len(exec_result) >= 2:
-        exit_code = exec_result[0] if exec_result[0] is not None else -1
-        output = exec_result[1] if exec_result[1] is not None else b""
-        return int(exit_code), bytes(output)
-    raise TypeError(f"Unsupported exec result type: {type(exec_result)!r}")
+    return exec_run_with_timeout(container, cmd, timeout_s=timeout_s, **kwargs)
 
 
 # ---------------------------------------------------------------------------
