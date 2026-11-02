@@ -20,10 +20,10 @@ else:
 IGNORE_INDEX = -100
 
 
-def _shift_labels(labels):
+def _shift_labels(labels, ignore_index=IGNORE_INDEX):
     shifted = torch.empty_like(labels)
     shifted[..., :-1] = labels[..., 1:]
-    shifted[..., -1] = IGNORE_INDEX
+    shifted[..., -1] = ignore_index
     return shifted
 
 
@@ -79,7 +79,7 @@ def _oracle_dft_loss(
     detach_weights=True,
 ):
     """Independent oracle: select valid rows before matmul, then logsumexp/gather."""
-    targets = _shift_labels(labels) if shift_labels else labels
+    targets = _shift_labels(labels, ignore_index) if shift_labels else labels
     targets = targets.reshape(-1)
     valid = targets != ignore_index
     logits = hidden.reshape(-1, hidden.shape[-1])[valid].to(weight.dtype) @ weight.t()
@@ -601,6 +601,11 @@ class TestUnslothFusedDftLossRouting(unittest.TestCase):
                 logit_softcapping=1.0,
             )
         self.assertEqual(loss.item(), 0.25)
+        forwarded_denominator = original.call_args.kwargs["n_items"]
+        self.assertIsInstance(forwarded_denominator, torch.Tensor)
+        self.assertEqual(forwarded_denominator.dtype, torch.float32)
+        self.assertEqual(forwarded_denominator.device, weight.device)
+        self.assertEqual(forwarded_denominator.item(), 7)
         original.assert_called_once_with(
             trainer,
             hidden,
@@ -608,7 +613,7 @@ class TestUnslothFusedDftLossRouting(unittest.TestCase):
             None,
             labels,
             mask=mask,
-            n_items=7,
+            n_items=forwarded_denominator,
             scaling=8.0,
             target_gb=2.0,
             torch_compile=True,
@@ -683,6 +688,7 @@ class TestFusedDftCUDA(unittest.TestCase):
                     labels = labels.t().contiguous().t()
                     actual = dft_fused.unsloth_fused_dft_loss(
                         None, hidden, weight, bias, labels,
+                        shift_labels=True,
                         scaling=8.0, n_items=torch.tensor(11, device='cuda'),
                         n_chunks=2, torch_compile=True,
                         logit_scale_multiply=1.5, logit_scale_divide=2.0,
@@ -781,6 +787,72 @@ class TestFusedDftCUDA(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("scaled gradients match oracle", result.stdout)
+
+    def test_custom_ignore_indices_match_independent_value_and_gradient_oracle(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                textwrap.dedent("""\
+                    import os
+                    import sys
+                    os.environ['UNSLOTH_ENABLE_CCE'] = '0'
+                    import unsloth
+                    import torch
+                    import unsloth_zoo.fused_losses.cross_entropy_loss as ce_mod
+                    from src.train import dft_fused
+                    sys.path.insert(0, 'tests/test_train')
+                    from test_dft_fused import _oracle_dft_loss
+
+                    cases = 0
+                    for device in ('cpu', 'cuda'):
+                        for installed_ignore in (-7, 0):
+                            dft_fused.install_fused_dft(ignore_index=installed_ignore)
+                            for override in (None, -9, -100):
+                                ignore = installed_ignore if override is None else override
+                                torch.manual_seed(41)
+                                hidden = torch.randn(2, 6, 3, device=device, requires_grad=True)
+                                weight = torch.randn(5, 3, device=device, requires_grad=True)
+                                bias = torch.randn(5, device=device, requires_grad=True)
+                                labels = torch.tensor(
+                                    [[0, 1, 2, 3, 4, 1], [2, 3, 4, 1, 0, 2]], device=device,
+                                )
+                                labels[:, 2] = ignore
+                                mask = torch.ones_like(labels)
+                                mask[:, 4] = 0
+                                kwargs = {} if override is None else dict(ignore_index=override)
+                                denominator = None if override is None else 9
+                                actual = dft_fused.unsloth_fused_dft_loss(
+                                    None, hidden, weight, bias, labels, mask=mask,
+                                    n_items=denominator, scaling=4.0, n_chunks=2,
+                                    torch_compile=(device == 'cuda'),
+                                    logit_scale_multiply=1.5, logit_softcapping=2.0,
+                                    **kwargs,
+                                )
+                                expected = _oracle_dft_loss(
+                                    hidden, weight, bias, labels.masked_fill(mask == 0, ignore),
+                                    shift_labels=True, ignore_index=ignore, n_items=denominator,
+                                    multiply=1.5, softcap=2.0,
+                                )
+                                torch.testing.assert_close(actual, expected)
+                                for actual_grad, expected_grad in zip(
+                                    torch.autograd.grad(actual, (hidden, weight, bias)),
+                                    torch.autograd.grad(expected * 4.0, (hidden, weight, bias)),
+                                ):
+                                    assert torch.isfinite(actual_grad).all()
+                                    torch.testing.assert_close(actual_grad, expected_grad, rtol=2e-5, atol=1e-6)
+                                cases += 1
+                    assert ce_mod._FUSED_CE_COMPILE_SUPPORTED is True, 'Unsloth fell back to eager execution'
+                    print(f'custom-ignore stock-wrapper oracle: {cases} CPU/CUDA cases passed')
+                """),
+            ],
+            cwd=Path(__file__).resolve().parents[2],
+            text=True,
+            capture_output=True,
+            timeout=180,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("12 CPU/CUDA cases passed", result.stdout)
 
 
 if __name__ == "__main__":

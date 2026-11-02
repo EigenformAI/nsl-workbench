@@ -128,6 +128,11 @@ def unsloth_fused_dft_loss(
 
     # The stock wrapper always shifts labels itself; forwarding shift_labels through its
     # **kwargs duplicates the accumulator's argument. It also flattens with view().
+    # Canonicalize the selected ignore value for its hard-coded shift/mask/count sentinel.
+    ignore_index = int(kwargs.get("ignore_index", _DEFAULT_IGNORE_INDEX))
+    if ignore_index != -100:
+        labels = labels.masked_fill(labels == ignore_index, -100)
+        kwargs["ignore_index"] = -100
     labels = labels.contiguous()
     if n_items is not None and not torch.is_tensor(n_items):
         n_items = torch.as_tensor(n_items, dtype=torch.float32, device=lm_head_weight.device)
