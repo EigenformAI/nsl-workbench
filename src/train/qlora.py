@@ -1339,9 +1339,9 @@ def train_sft(
         max_seq_length=max_seq_length,
     )
     if inner_loss == "dft" and dft_impl == "fused":
-        # Backstop: the per-model compiled module imports the loss fns by value at model-load.
-        # The source patch above runs first so it normally suffices; re-bind here in case the
-        # compiled module was already imported. The fail-loud engagement log confirms which ran.
+        # Generated modules can import stale loss re-exports from unsloth_zoo.loss_utils
+        # even after the source patch. Refresh them and the Llama namespace used by Qwen
+        # fast forwards after model loading, without changing the import order.
         from src.train.dft_fused import _repatch_generated_modules
 
         _repatch_generated_modules()

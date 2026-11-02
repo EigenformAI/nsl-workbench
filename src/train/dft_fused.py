@@ -159,15 +159,17 @@ def unsloth_fused_dft_loss(
 
 
 def _repatch_generated_modules() -> int:
-    """Backstop: rebind unsloth_fused_ce_loss in any already-imported Unsloth compiled module.
+    """Rebind loss symbols in the loaded Llama namespace and generated Unsloth modules.
 
-    The generated per-model module imports the loss fns by value
-    (`from ...cross_entropy_loss import unsloth_fused_ce_loss`). Patching the source symbol
-    before that import is enough, but if the module was imported first we rebind it here.
+    Qwen2/3 fast forwards resolve the public loss in unsloth.models.llama. Generated
+    modules can import a stale re-export from unsloth_zoo.loss_utils even after the
+    source loss module is patched, so keep this pass both at install and after loading.
     """
     count = 0
     for name, module in list(sys.modules.items()):
-        if "compiled_module" not in name or module is None:
+        if module is None:
+            continue
+        if name != "unsloth.models.llama" and "compiled_module" not in name:
             continue
         if getattr(module, "unsloth_fused_ce_loss", None) not in (
             None,
@@ -182,7 +184,7 @@ def _repatch_generated_modules() -> int:
             module.compute_fused_ce_loss = compute_fused_dft_loss
             count += 1
     if count:
-        logger.info("Re-bound fused DFT loss into {} compiled-module symbol(s)", count)
+        logger.info("Re-bound fused DFT loss into {} Llama/generated-module symbol(s)", count)
     return count
 
 

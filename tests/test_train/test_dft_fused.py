@@ -659,6 +659,108 @@ class TestUnslothFusedDftLossRouting(unittest.TestCase):
     "CUDA and the installed Unsloth stack are required",
 )
 class TestFusedDftCUDA(unittest.TestCase):
+    def test_qwen_loss_reference_honors_configured_chunks(self):
+        # Resolve the real consumer after Unsloth imports, as the training entry point does.
+        for configured, expected_chunks in (("default", 16), ("7", 7)):
+            with self.subTest(configured=configured):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        textwrap.dedent("""\
+                            import os
+                            import sys
+                            os.environ.pop('UNSLOTH_CE_LOSS_TARGET_GB', None)
+                            os.environ.pop('UNSLOTH_RETURN_LOGITS', None)
+                            os.environ.pop('UNSLOTH_RETURN_HIDDEN_STATES', None)
+                            os.environ['UNSLOTH_ENABLE_CCE'] = '0'
+                            # Standalone autograd does not use the trainer's scaled output gradient.
+                            os.environ['UNSLOTH_ENABLE_LOGGING'] = '0'
+                            configured, expected_chunks = sys.argv[1], int(sys.argv[2])
+                            if configured == 'default':
+                                os.environ.pop('UNSLOTH_CE_LOSS_N_CHUNKS', None)
+                            else:
+                                os.environ['UNSLOTH_CE_LOSS_N_CHUNKS'] = configured
+                            import unsloth
+                            import unsloth.models.llama as llama
+                            import torch
+                            from unittest.mock import patch
+                            import unsloth_zoo.fused_losses.cross_entropy_loss as ce_mod
+                            from src.train import dft_fused
+                            sys.path.insert(0, 'tests/test_train')
+                            from test_dft_fused import _oracle_dft_loss
+
+                            dft_fused.install_fused_dft()
+                            dft_fused.install_fused_dft()
+                            loss_fn = llama.unsloth_fused_ce_loss
+                            torch.manual_seed(53)
+                            hidden = torch.randn(2, 56, 5, device='cuda', requires_grad=True)
+                            weight = torch.randn(13, 5, device='cuda', requires_grad=True)
+                            bias = torch.randn(13, device='cuda', requires_grad=True)
+                            labels = torch.randint(0, 13, (2, 56), device='cuda')
+                            labels[:, 3] = -100
+                            real_chunk = torch.chunk
+
+                            def check_case(explicit_chunks, compiled):
+                                observed = []
+
+                                def observe_chunk(tensor, chunks, *args, **kwargs):
+                                    pieces = real_chunk(tensor, chunks, *args, **kwargs)
+                                    observed.append((chunks, len(pieces)))
+                                    return pieces
+
+                                kwargs = {} if explicit_chunks is None else dict(n_chunks=explicit_chunks)
+
+                                def compute():
+                                    return loss_fn(
+                                        None, hidden, weight, bias, labels,
+                                        scaling=8.0, torch_compile=compiled, **kwargs,
+                                    )
+
+                                if compiled:
+                                    actual = compute()
+                                else:
+                                    with patch.object(torch, 'chunk', side_effect=observe_chunk):
+                                        actual = compute()
+                                expected = _oracle_dft_loss(
+                                    hidden, weight, bias, labels, shift_labels=True,
+                                )
+                                torch.testing.assert_close(actual, expected)
+                                for actual_grad, expected_grad in zip(
+                                    torch.autograd.grad(actual, (hidden, weight, bias)),
+                                    torch.autograd.grad(expected * 8.0, (hidden, weight, bias)),
+                                ):
+                                    torch.testing.assert_close(
+                                        actual_grad, expected_grad, rtol=2e-5, atol=1e-6,
+                                    )
+                                if not compiled:
+                                    selected = expected_chunks if explicit_chunks is None else explicit_chunks
+                                    print(f'{configured=}, {explicit_chunks=}, {observed=}', flush=True)
+                                    assert observed, 'loss did not split any tensors'
+                                    assert all(pair == (selected, selected) for pair in observed), (
+                                        f'expected {selected} requested and returned chunks, got {observed}'
+                                    )
+
+                            # Check the working explicit override before the formerly broken default.
+                            check_case(2, False)
+                            check_case(None, False)
+                            assert loss_fn is dft_fused.unsloth_fused_dft_loss
+                            assert dft_fused._repatch_generated_modules() == 0
+                            check_case(None, True)
+                            assert ce_mod._FUSED_CE_COMPILE_SUPPORTED is True, 'Unsloth fell back to eager execution'
+                            print('Qwen loss reference: chunks, compiled DFT values and scaled gradients match oracle')
+                        """),
+                        configured,
+                        str(expected_chunks),
+                    ],
+                    cwd=Path(__file__).resolve().parents[2],
+                    text=True,
+                    capture_output=True,
+                    timeout=180,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("scaled gradients match oracle", result.stdout)
+
     def test_compiled_stock_wrapper_matches_independent_oracle(self):
         # Unsloth's process-wide patches must not leak into the rest of the unit suite.
         result = subprocess.run(
