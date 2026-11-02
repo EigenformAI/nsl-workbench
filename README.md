@@ -1,4 +1,4 @@
-# Negative Space Learning v2
+# NSL Workbench
 
 A framework for recursive self-training. An agent attempts tasks, successful attempts shape the training data, and the trained model attempts the next round in repeated generations.
 
