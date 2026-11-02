@@ -35,7 +35,9 @@ AsftMode = Literal["dft", "sft+kl", "asft"]
 AsftKlDirection = Literal["forward", "reverse"]
 AsftReferencePolicy = Literal["disable_adapter", "frozen_copy"]
 AsftStreamingMode = Literal["off", "auto", "batch", "seq", "hybrid"]
-AsftNormalizeBy = Literal["tokens", "weights"]
+AsftNormalizationSemantics = Literal[
+    "token_count_v0", "microbatch_weights_v0", "update_weights_v1"
+]
 SFTConfig: Any | None = None
 SFTTrainer: Any | None = None
 ASFTTrainer: Any | None = None
@@ -272,6 +274,70 @@ def _load_wandb_api_key_from_dotenv() -> str | None:
     if not isinstance(value, str) or not value:
         return None
     return value
+
+
+def _load_parent_wandb_metadata() -> dict[str, Any] | None:
+    raw = os.environ.get("NSL_WANDB_METADATA")
+    if raw is None:
+        return None
+    try:
+        metadata = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("NSL_WANDB_METADATA must contain valid JSON") from exc
+    if not isinstance(metadata, dict):
+        raise ValueError("NSL_WANDB_METADATA must contain a JSON object")
+    config, summary, run = (metadata.get(key) for key in ("config", "summary", "run"))
+    if not isinstance(config, dict) or not all(
+        isinstance(config.get(key), dict) for key in ("nsl", "rollout")
+    ):
+        raise ValueError("NSL_WANDB_METADATA.config must contain nsl and rollout objects")
+    if not isinstance(summary, dict):
+        raise ValueError("NSL_WANDB_METADATA.summary must be an object")
+    if not isinstance(run, dict):
+        raise ValueError("NSL_WANDB_METADATA.run must be an object")
+    for key in ("group", "name", "job_type"):
+        if not isinstance(run.get(key), str) or not run[key]:
+            raise ValueError(f"NSL_WANDB_METADATA.run.{key} must be a string")
+    tags = run.get("tags")
+    if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+        raise ValueError("NSL_WANDB_METADATA.run.tags must be a string list")
+    return metadata
+
+
+def _finetune_tracking_config(metadata: dict[str, Any]) -> dict[str, Any]:
+    omitted = {"training_data_paths", "wandb_project", "exported_at"}
+    tracking = {key: value for key, value in metadata.items() if key not in omitted}
+    for key in ("base_model", "rehearsal_dataset"):
+        value = tracking.get(key)
+        if isinstance(value, str) and (
+            value.startswith("file://") or Path(value).expanduser().is_absolute()
+        ):
+            tracking[key] = None
+    return tracking
+
+
+def _init_parent_wandb_run(
+    wandb_project: str,
+    parent_metadata: dict[str, Any],
+    finetune_config: dict[str, Any],
+) -> Any:
+    import wandb
+
+    identity = parent_metadata["run"]
+    try:
+        return wandb.init(
+            project=wandb_project, name=identity["name"], group=identity["group"],
+            job_type=identity["job_type"], tags=identity["tags"],
+            config={**parent_metadata["config"], "finetune": finetune_config},
+        )
+    except Exception:
+        active_run = getattr(wandb, "run", None)
+        if active_run is not None:
+            try:
+                active_run.finish(exit_code=1)
+            except Exception:
+                logger.exception("Failed to finish partially initialized W&B run")
+        raise
 
 
 def _cleanup_torch_cuda_state() -> None:
@@ -558,7 +624,7 @@ def _observe_training_batches(trainer: Any) -> dict[str, Any]:
     return evidence
 
 
-def _dataset_completion_tokens(dataset: Any, max_seq_length: int) -> int:
+def _dataset_completion_tokens(dataset: Any, max_seq_length: int | None) -> int:
     total = 0
     for row in dataset:
         labels = _build_completion_only_labels(
@@ -708,6 +774,32 @@ def _completion_survives_truncation(
     return 1 in completion_mask[:max_seq_length]
 
 
+def _retain_sft_row(
+    row: dict[str, Any],
+    *,
+    source: str,
+    row_index: int,
+    max_seq_length: int | None,
+    strict_no_truncation: bool,
+) -> bool:
+    if max_seq_length is None:
+        return True
+    if not _completion_survives_truncation(row, max_seq_length=max_seq_length):
+        if strict_no_truncation:
+            raise ValueError(
+                f"{source} row {row_index} response would be fully truncated at "
+                f"max_seq_length={max_seq_length}"
+            )
+        return False
+    token_count = len(_as_1d_int_list(row["input_ids"], key="input_ids"))
+    if strict_no_truncation and token_count > max_seq_length:
+        raise ValueError(
+            f"{source} row {row_index} is {token_count} tokens, longer than "
+            f"max_seq_length={max_seq_length}"
+        )
+    return True
+
+
 def _build_completion_only_labels(
     *,
     input_ids: Sequence[int],
@@ -842,13 +934,14 @@ def _load_self_generated_sft_rows(
     tokenizer: Any,
     *,
     max_seq_length: int | None = None,
+    strict_no_truncation: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     dropped_fully_truncated = 0
     for training_data_path in training_data_paths:
         resolved_path = Path(training_data_path).expanduser().resolve()
         with open(resolved_path, "r", encoding="utf-8") as handle:
-            for line in handle:
+            for row_index, line in enumerate(handle, start=1):
                 line = line.strip()
                 if not line:
                     continue
@@ -875,9 +968,12 @@ def _load_self_generated_sft_rows(
                 # token survives, so every label is IGNORE_INDEX. Such a row carries
                 # zero training signal and, alone in a batch (bs=1), divides the loss
                 # by zero valid tokens -> nan that poisons gradient accumulation.
-                if not _completion_survives_truncation(
+                if not _retain_sft_row(
                     row,
+                    source=str(resolved_path),
+                    row_index=row_index,
                     max_seq_length=max_seq_length,
+                    strict_no_truncation=strict_no_truncation,
                 ):
                     dropped_fully_truncated += 1
                     continue
@@ -961,6 +1057,7 @@ def _load_rehearsal_sft_rows(
     prompt_chars: int,
     max_chars: int,
     max_seq_length: int | None = None,
+    strict_no_truncation: bool = False,
 ) -> list[list[dict[str, Any]]]:
     if rows_per_epoch <= 0:
         return [[] for _ in range(virtual_epochs)]
@@ -990,7 +1087,7 @@ def _load_rehearsal_sft_rows(
             selected_texts = [rng.choice(valid_texts) for _ in range(rows_per_epoch)]
 
         epoch_rows: list[dict[str, Any]] = []
-        for text in selected_texts:
+        for row_index, text in enumerate(selected_texts, start=1):
             excerpt = text[:prompt_chars].rstrip()
             row_prompt = prompt.rstrip()
             if excerpt:
@@ -1002,9 +1099,12 @@ def _load_rehearsal_sft_rows(
                 prompt=row_prompt,
                 raw_response=text,
             )
-            if not _completion_survives_truncation(
+            if not _retain_sft_row(
                 row,
+                source=f"rehearsal {dataset_name} epoch {epoch}",
+                row_index=row_index,
                 max_seq_length=max_seq_length,
+                strict_no_truncation=strict_no_truncation,
             ):
                 dropped_fully_truncated += 1
                 continue
@@ -1028,6 +1128,7 @@ def _load_sft_dataset(
     tokenizer: Any,
     *,
     max_seq_length: int | None = None,
+    strict_no_truncation: bool = False,
     virtual_epochs: int = 1,
     rehearsal_dataset: str | None = None,
     rehearsal_split: str = "train",
@@ -1037,6 +1138,7 @@ def _load_sft_dataset(
     rehearsal_prompt: str = "Continue the following passage",
     rehearsal_prompt_chars: int = 256,
     rehearsal_max_chars: int = 2048,
+    stats: dict[str, int] | None = None,
 ) -> Any:
     """Load generation JSONL files plus optional rehearsal rows into an SFT Dataset."""
 
@@ -1044,7 +1146,8 @@ def _load_sft_dataset(
         raise ValueError("virtual_epochs must be at least 1")
 
     rows = _load_self_generated_sft_rows(
-        training_data_paths, tokenizer, max_seq_length=max_seq_length
+        training_data_paths, tokenizer, max_seq_length=max_seq_length,
+        strict_no_truncation=strict_no_truncation,
     )
 
     if not rows:
@@ -1064,6 +1167,7 @@ def _load_sft_dataset(
             prompt_chars=rehearsal_prompt_chars,
             max_chars=rehearsal_max_chars,
             max_seq_length=max_seq_length,
+            strict_no_truncation=strict_no_truncation,
         )
     else:
         rehearsal_rows_by_epoch = [[] for _ in range(virtual_epochs)]
@@ -1073,6 +1177,19 @@ def _load_sft_dataset(
         expanded_rows.extend(rows)
         expanded_rows.extend(rehearsal_rows_by_epoch[epoch])
 
+    if stats is not None:
+        stats["selected_retained_count"] = len(rows) * virtual_epochs
+        stats["rehearsal_retained_count"] = sum(map(len, rehearsal_rows_by_epoch))
+        stats["selected_valid_token_count"] = (
+            _dataset_completion_tokens(rows, max_seq_length) * virtual_epochs
+        )
+        stats["rehearsal_valid_token_count"] = sum(
+            _dataset_completion_tokens(epoch_rows, max_seq_length)
+            for epoch_rows in rehearsal_rows_by_epoch
+        )
+        stats["valid_token_count"] = (
+            stats["selected_valid_token_count"] + stats["rehearsal_valid_token_count"]
+        )
     return _dataset_from_list(expanded_rows)
 
 
@@ -1082,6 +1199,7 @@ def train_sft(
     output_dir: str,
     *,
     max_seq_length: int = DEFAULT_MAX_SEQ_LENGTH,
+    strict_no_truncation: bool = False,
     max_steps: int = 50,
     per_device_train_batch_size: int = 2,
     gradient_accumulation_steps: int = 4,
@@ -1119,7 +1237,7 @@ def train_sft(
     asft_streaming: AsftStreamingMode = "off",
     asft_ref_microbatch_size: int | None = None,
     asft_seq_chunk_size: int | None = None,
-    asft_normalize_by: AsftNormalizeBy = "tokens",
+    asft_normalization_semantics: AsftNormalizationSemantics = "token_count_v0",
 ) -> Path:
     """Run SFT on the provided generation window and save a trained LoRA adapter."""
 
@@ -1169,8 +1287,10 @@ def train_sft(
             )
         os.environ["WANDB_PROJECT"] = wandb_project
         report_to = "wandb"
+        parent_wandb_metadata = _load_parent_wandb_metadata()
     else:
         report_to = "none"
+        parent_wandb_metadata = None
 
     if inner_loss == "asft":
         sft_config_cls, sft_trainer_cls, asft_streaming_config_cls = (
@@ -1200,14 +1320,14 @@ def train_sft(
     if inner_loss == "asft":
         asft_kl_active = asft_mode in ("sft+kl", "asft") and asft_kl_weight != 0.0
         logger.info(
-            "ASFT active: mode={}, kl_weight={}, kl_active={}, kl_direction={}, reference_policy={}, streaming={}, normalize_by={}",
+            "ASFT active: mode={}, kl_weight={}, kl_active={}, kl_direction={}, reference_policy={}, streaming={}, normalization_semantics={}",
             asft_mode,
             asft_kl_weight,
             asft_kl_active,
             asft_kl_direction,
             asft_reference_policy,
             asft_streaming,
-            asft_normalize_by,
+            asft_normalization_semantics,
         )
         if asft_mode == "asft" and asft_kl_weight == 0.0:
             logger.warning(
@@ -1241,10 +1361,12 @@ def train_sft(
     resolved_training_paths = [
         str(Path(path).expanduser().resolve()) for path in training_data_paths
     ]
+    dataset_stats: dict[str, int] = {}
     dataset = _load_sft_dataset(
         [Path(path) for path in resolved_training_paths],
         tokenizer,
         max_seq_length=max_seq_length,
+        strict_no_truncation=strict_no_truncation,
         virtual_epochs=num_train_epochs,
         rehearsal_dataset=rehearsal_dataset,
         rehearsal_split=rehearsal_split,
@@ -1254,6 +1376,7 @@ def train_sft(
         rehearsal_prompt=rehearsal_prompt,
         rehearsal_prompt_chars=rehearsal_prompt_chars,
         rehearsal_max_chars=rehearsal_max_chars,
+        stats=dataset_stats,
     )
     _warn_if_dataset_would_truncate(
         dataset,
@@ -1276,6 +1399,64 @@ def train_sft(
         }
     else:
         checkpoint_kwargs = {"save_strategy": "no"}
+
+    metadata: dict[str, Any] = {
+        "base_model": base_model,
+        "max_steps": max_steps,
+        "configured_num_train_epochs": num_train_epochs,
+        "virtual_epochs": num_train_epochs,
+        "per_device_train_batch_size": per_device_train_batch_size,
+        "gradient_accumulation_steps": gradient_accumulation_steps,
+        "learning_rate": learning_rate,
+        "warmup_steps": effective_warmup_steps,
+        "warmup_ratio": warmup_ratio,
+        "lr_scheduler_type": lr_scheduler_type,
+        "weight_decay": weight_decay,
+        "logging_steps": logging_steps,
+        "lora_rank": lora_rank,
+        "lora_alpha": lora_alpha,
+        "lora_dropout": lora_dropout,
+        "seed": seed,
+        "row_count": row_count,
+        "max_seq_length": max_seq_length,
+        "dataset_completion_tokens_after_truncation": dataset_completion_tokens,
+        "used_row_count_semantics": "loss-forward row exposures on this process; repeats count again",
+        "trainer_class": trainer_class,
+        **package_versions,
+        "completion_only_loss": True,
+        "strict_no_truncation": strict_no_truncation,
+        "inner_loss": inner_loss,
+        "dft_impl": dft_impl if inner_loss == "dft" else None,
+        "masking": "completion_mask",
+        "save_steps": save_steps,
+        "group_by_length": group_by_length,
+        "training_data_paths": resolved_training_paths,
+        "rehearsal_dataset": rehearsal_dataset,
+        "rehearsal_split": rehearsal_split,
+        "rehearsal_text_field": rehearsal_text_field,
+        "rehearsal_rows_per_epoch": rehearsal_rows_per_epoch,
+        "selected_row_count": dataset_stats["selected_retained_count"],
+        "rehearsal_row_count": dataset_stats["rehearsal_retained_count"],
+        "rehearsal_retained_count": dataset_stats["rehearsal_retained_count"],
+        "selected_valid_token_count": dataset_stats["selected_valid_token_count"],
+        "rehearsal_valid_token_count": dataset_stats["rehearsal_valid_token_count"],
+        "valid_token_count": dataset_stats["valid_token_count"],
+        "rehearsal_seed": rehearsal_seed if rehearsal_seed is not None else seed,
+        "export_format": export_format,
+        "wandb_project": wandb_project,
+    }
+    if inner_loss == "asft":
+        metadata.update({
+            "asft_mode": asft_mode,
+            "asft_kl_weight": asft_kl_weight,
+            "asft_kl_direction": asft_kl_direction,
+            "asft_reference_policy": asft_reference_policy,
+            "asft_streaming": asft_streaming,
+            "asft_ref_microbatch_size": asft_ref_microbatch_size,
+            "asft_seq_chunk_size": asft_seq_chunk_size,
+            "asft_normalization_semantics": asft_normalization_semantics,
+            "unsloth_asft_fork_commit": _unsloth_asft_fork_commit(),
+        })
 
     training_args = sft_config_cls(
         output_dir=str(trainer_output_dir),
@@ -1329,20 +1510,9 @@ def train_sft(
                 ref_microbatch_size=asft_ref_microbatch_size,
                 seq_chunk_size=asft_seq_chunk_size,
             ),
-            normalize_by=asft_normalize_by,
+            normalization_semantics=asft_normalization_semantics,
         )
 
-    trainer = sft_trainer_cls(
-        model=model,
-        args=training_args,
-        train_dataset=dataset,
-        processing_class=tokenizer,
-        data_collator=_make_completion_only_data_collator(
-            tokenizer,
-            max_seq_length=max_seq_length,
-        ),
-        **trainer_kwargs,
-    )
     last_checkpoint = None
     if resume_from_checkpoint:
         from transformers.trainer_utils import get_last_checkpoint
@@ -1355,99 +1525,79 @@ def train_sft(
                 "--resume-from-checkpoint set but no checkpoint found in {}; starting fresh.",
                 resolved_output_dir,
             )
-    parameter_count, digest_before = _trainable_parameter_digest(model)
-    training_evidence = _observe_training_batches(trainer)
-    train_result = trainer.train(resume_from_checkpoint=last_checkpoint)
-    _, digest_after = _trainable_parameter_digest(model)
-    global_step = getattr(getattr(trainer, "state", None), "global_step", None)
-    if not isinstance(global_step, int):
-        global_step = getattr(train_result, "global_step", None)
-    if not isinstance(global_step, int):
-        global_step = None
-    loss = getattr(train_result, "training_loss", None)
-    loss = float(loss) if isinstance(loss, (int, float)) else None
-    loss_finite = math.isfinite(loss) if loss is not None else None
-    training_evidence.update(
-        optimizer_global_step=global_step,
-        training_loss=loss if loss_finite else None,
-        training_loss_finite=loss_finite,
-        trainable_parameter_count=parameter_count,
-        trainable_parameters_sha256_before=digest_before,
-        trainable_parameters_sha256_after=digest_after,
-        trainable_parameters_changed=(
-            digest_before != digest_after if digest_before is not None else None
-        ),
-    )
-
-    artifact_path = _save_training_artifact(
-        model,
-        tokenizer,
-        resolved_output_dir,
-        export_format=export_format,
-        gguf_quantize=gguf_quantize,
-    )
-    metadata: dict[str, Any] = {
-        "base_model": base_model,
-        "max_steps": max_steps,
-        "configured_num_train_epochs": num_train_epochs,
-        "virtual_epochs": num_train_epochs,
-        "per_device_train_batch_size": per_device_train_batch_size,
-        "gradient_accumulation_steps": gradient_accumulation_steps,
-        "learning_rate": learning_rate,
-        "warmup_steps": effective_warmup_steps,
-        "warmup_ratio": warmup_ratio,
-        "lr_scheduler_type": lr_scheduler_type,
-        "weight_decay": weight_decay,
-        "lora_rank": lora_rank,
-        "lora_alpha": lora_alpha,
-        "lora_dropout": lora_dropout,
-        "seed": seed,
-        "row_count": row_count,
-        "max_seq_length": max_seq_length,
-        "dataset_completion_tokens_after_truncation": dataset_completion_tokens,
-        "used_row_count_semantics": "loss-forward row exposures on this process; repeats count again",
-        "trainer_class": trainer_class,
-        **package_versions,
-        **training_evidence,
-        "completion_only_loss": True,
-        "inner_loss": inner_loss,
-        "dft_impl": dft_impl if inner_loss == "dft" else None,
-        "masking": "completion_mask",
-        "save_steps": save_steps,
-        "group_by_length": group_by_length,
-        "training_data_paths": resolved_training_paths,
-        "rehearsal_dataset": rehearsal_dataset,
-        "rehearsal_split": rehearsal_split,
-        "rehearsal_text_field": rehearsal_text_field,
-        "rehearsal_rows_per_epoch": rehearsal_rows_per_epoch,
-        "rehearsal_seed": rehearsal_seed if rehearsal_seed is not None else seed,
-        "export_format": export_format,
-        "wandb_project": wandb_project,
-        "exported_at": _export_timestamp(),
-    }
-    if export_format == "gguf":
-        converter = os.environ.get("NSL_TRAIN_GGUF_CONVERTER")
-        metadata["gguf_quantize"] = gguf_quantize
-        if converter:
-            converter_path = Path(converter).expanduser().resolve()
-            metadata["gguf_converter_path"] = str(converter_path)
-            metadata["gguf_converter_sha256"] = hashlib.sha256(converter_path.read_bytes()).hexdigest()
-    if inner_loss == "asft":
-        metadata.update(
-            {
-                "asft_mode": asft_mode,
-                "asft_kl_weight": asft_kl_weight,
-                "asft_kl_direction": asft_kl_direction,
-                "asft_reference_policy": asft_reference_policy,
-                "asft_streaming": asft_streaming,
-                "asft_ref_microbatch_size": asft_ref_microbatch_size,
-                "asft_seq_chunk_size": asft_seq_chunk_size,
-                "asft_normalize_by": asft_normalize_by,
-                "unsloth_asft_fork_commit": _unsloth_asft_fork_commit(),
-            }
+    metadata["resume_requested"] = resume_from_checkpoint
+    metadata["resume_from_checkpoint"] = bool(last_checkpoint)
+    wandb_run = None
+    if parent_wandb_metadata is not None:
+        assert wandb_project is not None
+        wandb_run = _init_parent_wandb_run(
+            wandb_project, parent_wandb_metadata, _finetune_tracking_config(metadata)
         )
-    _write_metadata(_training_metadata_path(artifact_path), metadata)
-    return artifact_path
+    wandb_succeeded = False
+    try:
+        if wandb_run is not None:
+            for key, value in parent_wandb_metadata["summary"].items():
+                wandb_run.summary[f"rollout/{key}"] = value
+        trainer = sft_trainer_cls(
+            model=model,
+            args=training_args,
+            train_dataset=dataset,
+            processing_class=tokenizer,
+            data_collator=_make_completion_only_data_collator(
+                tokenizer, max_seq_length=max_seq_length,
+            ),
+            **trainer_kwargs,
+        )
+        parameter_count, digest_before = _trainable_parameter_digest(model)
+        training_evidence = _observe_training_batches(trainer)
+        train_result = trainer.train(resume_from_checkpoint=last_checkpoint)
+        _, digest_after = _trainable_parameter_digest(model)
+        global_step = getattr(getattr(trainer, "state", None), "global_step", None)
+        if not isinstance(global_step, int):
+            global_step = getattr(train_result, "global_step", None)
+        if not isinstance(global_step, int):
+            global_step = None
+        loss = getattr(train_result, "training_loss", None)
+        loss = float(loss) if isinstance(loss, (int, float)) else None
+        loss_finite = math.isfinite(loss) if loss is not None else None
+        training_evidence.update(
+            optimizer_global_step=global_step,
+            training_loss=loss if loss_finite else None,
+            training_loss_finite=loss_finite,
+            trainable_parameter_count=parameter_count,
+            trainable_parameters_sha256_before=digest_before,
+            trainable_parameters_sha256_after=digest_after,
+            trainable_parameters_changed=(
+                digest_before != digest_after if digest_before is not None else None
+            ),
+        )
+
+        artifact_path = _save_training_artifact(
+            model, tokenizer, resolved_output_dir,
+            export_format=export_format, gguf_quantize=gguf_quantize,
+        )
+        metadata.update(training_evidence)
+        metadata["exported_at"] = _export_timestamp()
+        if export_format == "gguf":
+            converter = os.environ.get("NSL_TRAIN_GGUF_CONVERTER")
+            metadata["gguf_quantize"] = gguf_quantize
+            if converter:
+                converter_path = Path(converter).expanduser().resolve()
+                metadata["gguf_converter_path"] = str(converter_path)
+                metadata["gguf_converter_sha256"] = hashlib.sha256(converter_path.read_bytes()).hexdigest()
+        if wandb_run is not None:
+            metadata.update({
+                "wandb_run_id": getattr(wandb_run, "id", None),
+                "wandb_run_name": getattr(wandb_run, "name", None),
+                "wandb_run_group": getattr(wandb_run, "group", None),
+                "wandb_run_url": getattr(wandb_run, "url", None),
+            })
+        _write_metadata(_training_metadata_path(artifact_path), metadata)
+        wandb_succeeded = True
+        return artifact_path
+    finally:
+        if wandb_run is not None:
+            wandb_run.finish(exit_code=0 if wandb_succeeded else 1)
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -1458,6 +1608,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--training-data", action="append", default=[])
     parser.add_argument("--output", required=True)
     parser.add_argument("--max-seq-length", type=int, default=DEFAULT_MAX_SEQ_LENGTH)
+    parser.add_argument("--strict-no-truncation", action="store_true")
     parser.add_argument("--max-steps", type=int, default=50)
     parser.add_argument("--per-device-train-batch-size", type=int, default=2)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=4)
@@ -1547,9 +1698,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--asft-ref-microbatch-size", type=int, default=None)
     parser.add_argument("--asft-seq-chunk-size", type=int, default=None)
     parser.add_argument(
-        "--asft-normalize-by",
-        choices=("tokens", "weights"),
-        default="tokens",
+        "--asft-normalization-semantics",
+        choices=("token_count_v0", "microbatch_weights_v0", "update_weights_v1"),
+        default="token_count_v0",
     )
     return parser
 
@@ -1566,6 +1717,7 @@ def main(argv: list[str] | None = None) -> int:
         training_data_paths=args.training_data,
         output_dir=args.output,
         max_seq_length=args.max_seq_length,
+        strict_no_truncation=args.strict_no_truncation,
         max_steps=args.max_steps,
         per_device_train_batch_size=args.per_device_train_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
@@ -1603,7 +1755,7 @@ def main(argv: list[str] | None = None) -> int:
         asft_streaming=args.asft_streaming,
         asft_ref_microbatch_size=args.asft_ref_microbatch_size,
         asft_seq_chunk_size=args.asft_seq_chunk_size,
-        asft_normalize_by=args.asft_normalize_by,
+        asft_normalization_semantics=args.asft_normalization_semantics,
     )
 
     print(output_path)

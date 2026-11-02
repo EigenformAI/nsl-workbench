@@ -330,7 +330,8 @@ def _run_generation_parallel(
         training_row_count_fn=_count_training_rows if transforms else None,
     )
     global_circuit = parallel_runtime.GlobalCircuitBreaker(
-        [s.circuit_breaker for s in slots], threshold=0.5
+        [s.circuit_breaker for s in slots],
+        threshold=generation_config.global_circuit_breaker_threshold,
     )
     endpoint_pool = rt.endpoint_pool
     budget = IntrinsicBudgetController(

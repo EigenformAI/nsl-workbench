@@ -326,6 +326,18 @@ class Workflow:
                         f"workflow step {step.name!r} references unknown "
                         f"capabilities: {unknown}"
                     )
+            # A terminator must be invokable through the step's own allowlist.
+            allow = (
+                capability_names
+                if step.inherit_all_capabilities
+                else set(step.capabilities)
+            )
+            stray_terminators = sorted(set(step.terminator_capabilities) - allow)
+            if stray_terminators:
+                raise ValueError(
+                    f"workflow step {step.name!r} declares terminator_capabilities "
+                    f"outside its allowlist: {stray_terminators}"
+                )
             if len(step.next_steps) > 1:
                 raise ValueError(
                     f"workflow step {step.name!r} has fan-out; v1 supports "

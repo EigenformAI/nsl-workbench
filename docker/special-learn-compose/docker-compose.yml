@@ -1,0 +1,14 @@
+services:
+  service-a:
+    container_name: special-learn-compose_service-a_1
+    build:
+      context: .
+      dockerfile: Dockerfile.alpine
+    networks:
+      - my-network
+    restart: "no"
+    tty: true
+    stdin_open: true
+
+networks:
+  my-network:

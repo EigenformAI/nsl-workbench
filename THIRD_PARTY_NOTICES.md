@@ -22,6 +22,7 @@ This project modifies the loss to:
 - Support noncontiguous tensors in relevant KL reshapes.
 - Log legacy sequence-KV streaming fallbacks.
 - Compute active KL using one full reference forward and sequence chunks with optional non-reentrant gradient checkpointing. Legacy reference-streaming helpers remain defined but are not the active KL execution path.
+- Separate token and detached probability-weight normalization, including optimizer-update-wide denominators with random-state replay.
 
 The local trainer subclasses the installed `UnslothTrainer`, imports the modified local loss, requests full logits before parent initialization when ASFT is enabled, and creates a frozen reference only when KL is active. Types, documentation, and warnings are adapted for the local training integration.
 

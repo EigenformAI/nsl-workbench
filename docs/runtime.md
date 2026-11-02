@@ -1,6 +1,6 @@
 # Runtime and recovery
 
-This reference describes the example configuration and source behavior.
+This reference describes the materials example configuration and shared runtime behavior. The [cleanup reference](cleanup-task.md) describes its separate, less restricted task environment.
 
 ## Containers and listeners
 
@@ -66,3 +66,27 @@ Replace `<printed-run-identifier>` with the actual identifier before running the
 Serving lineage identifies configured serving paths and ancestry. It does not attest the bytes loaded into GPU memory.
 
 Generation-boundary recovery is distinct from optimizer-state recovery. No mid-fit GGUF checkpoint or optimizer-state resume is promised. There is no `--resume`, `--stop-after-generation`, or `--skip-training` switch. Do not infer safe boundary stopping from Ctrl+C timing.
+
+Training artifacts are reused only when their metadata matches the effective objective and truncation settings. Missing applicable fields or a mismatch fail with fresh-output guidance. Artifacts from older versions can require new output paths. There is no inferred-default migration.
+
+## Runtime and training controls
+
+`inference.seed` is optional. OpenAI-compatible clients forward configured values, including zero, and omit the request field when unset. llama.cpp, vLLM, SGLang, and OpenRouter support this transport. Claude has no corresponding setting. A seed does not guarantee deterministic results across servers.
+
+`generation.global_circuit_breaker_threshold` is positive and finite, with default `0.5`. Exactly half the slots reaching the existing breaker condition triggers that default. `1.0` requires every slot. A value greater than one disables only this breaker, not other episode or runtime limits.
+
+`training.inner_loss_schedule` selects the objective after each collection generation. Entry zero controls the first training phase. A run with three generations needs two entries. Extra entries are validated but not executed. Without a schedule, `inner_loss` and the scalar ASFT settings remain active. Each scheduled entry contains `loss` and can override `asft_kl_weight`.
+
+`training.strict_no_truncation` defaults to `false`. Default loading drops rows with no completion token inside the sequence window and permits partial truncation. Strict loading raises for those rows and for any encoded row longer than `max_seq_length`. The rule applies to generated and rehearsal rows.
+
+ASFT combines ordinary or probability-weighted token loss with an optional reference-model divergence penalty (KL). DFT uses detached target-token probabilities as weights. The normalization settings determine the denominators, not which model supplies the reference predictions.
+
+`training.asft_normalization_semantics` applies only during ASFT phases:
+
+- `token_count_v0` (default): token-count normalization for the selected loss and KL term.
+- `microbatch_weights_v0`: detached microbatch probability-weight normalization for DFT, with separate token-count normalization for KL.
+- `update_weights_v1`: the corresponding detached denominators across the complete optimizer-update window, including final partial windows.
+
+The old `asft_normalize_by` spelling is rejected. Its `tokens` choice corresponds to `token_count_v0`. Its `weights` choice has no exact replacement: the new weight modes normalize KL separately. Update-wide normalization requires trainer support and does not change standalone SFT or fused DFT.
+
+External vLLM adapter serving accepts `external_request_model`, `expected_model_root`, and `expected_model_parent` together with `lora_adapter_path`. Startup and recovery require a unique matching inventory card, including in endpoint pools. Request naming and resume lineage use the configured alias. These checks trust the server's inventory and do not attest loaded bytes. The local vLLM image pin is `vllm/vllm-openai:v0.20.2`; model-specific compatibility requires separate verification.

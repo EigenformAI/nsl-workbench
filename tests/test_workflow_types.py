@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from src.task.types import Workflow, WorkflowStep
@@ -87,6 +89,24 @@ def test_workflow_validate_accepts_empty_explicit_allowlist() -> None:
     )
 
     workflow.validate({"run_python"})
+
+
+@pytest.mark.parametrize("inherit_all", [False, True])
+def test_workflow_terminators_must_belong_to_effective_capabilities(inherit_all) -> None:
+    step = WorkflowStep(
+        name="execute",
+        prompt="execute",
+        inherit_all_capabilities=inherit_all,
+        capabilities=() if inherit_all else ("run_python",),
+        terminator_capabilities=("report_result",),
+    )
+    declared = {"run_python"} if inherit_all else {"run_python", "report_result"}
+
+    with pytest.raises(ValueError, match="execute.*terminator_capabilities.*report_result"):
+        Workflow(steps=(step,)).validate(declared)
+
+    supported = replace(step, inherit_all_capabilities=False, capabilities=("report_result",))
+    Workflow(steps=(supported,)).validate({"report_result"})
 
 
 def test_workflow_validate_rejects_inherit_all_with_named_capabilities() -> None:

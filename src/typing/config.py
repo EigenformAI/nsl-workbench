@@ -1,3 +1,4 @@
+import math
 import warnings
 from typing import Any, Dict, List, Literal, Optional
 from urllib.parse import urlparse
@@ -7,6 +8,22 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from src.parsing.repetition_guard import RepetitionGuardConfig
 
 CudagraphMode = Literal["full", "piecewise", "full_and_piecewise", "none"]
+InnerLoss = Literal["sft", "dft", "asft"]
+
+
+class LossStep(BaseModel):
+    """Objective for training after one collection generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    loss: InnerLoss
+    asft_kl_weight: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def _validate_loss_specific_overrides(self) -> "LossStep":
+        if self.asft_kl_weight is not None and self.loss != "asft":
+            raise ValueError("asft_kl_weight is only valid for a loss='asft' schedule step")
+        return self
 
 
 class ModeConfig(BaseModel):
@@ -382,6 +399,7 @@ class AppConfig(BaseModel):
         timeout: int = Field(default=300, gt=0)
         frequency_penalty: Optional[float] = None
         presence_penalty: Optional[float] = None
+        seed: Optional[int] = None
 
     inference: InferenceConfig = Field(default_factory=InferenceConfig)
 
@@ -415,6 +433,9 @@ class AppConfig(BaseModel):
         local_model_path: Optional[str] = None
         lora_adapter_path: Optional[str] = None
         served_model_name: Optional[str] = None
+        external_request_model: Optional[str] = None
+        expected_model_root: Optional[str] = None
+        expected_model_parent: Optional[str] = None
         enable_auto_tool_choice: Optional[bool] = None
         tool_call_parser: Optional[str] = None
         # Opt-in only. Set for hybrid-thinking models (e.g. Qwen3 series) so
@@ -443,6 +464,20 @@ class AppConfig(BaseModel):
         def _validate_endpoints(self) -> "AppConfig.VllmConfig":
             if self.endpoint and self.endpoints:
                 raise ValueError("set either vllm.endpoint or vllm.endpoints, not both")
+            exact_inventory_fields = (
+                self.external_request_model,
+                self.expected_model_root,
+                self.expected_model_parent,
+            )
+            if any(value is not None for value in exact_inventory_fields) and not all(
+                value is not None for value in exact_inventory_fields
+            ):
+                raise ValueError(
+                    "external_request_model, expected_model_root, and "
+                    "expected_model_parent must be configured together"
+                )
+            if self.external_request_model is not None and not self.lora_adapter_path:
+                raise ValueError("external_request_model requires lora_adapter_path")
             if self.min_healthy_endpoint_capacity < 0:
                 raise ValueError("min_healthy_endpoint_capacity must be non-negative")
             endpoint_ids: set[str] = set()
@@ -722,6 +757,16 @@ class AppConfig(BaseModel):
         generation_output_dir: str = "./data/generations"
         max_consecutive_verification_failures: int = Field(default=15, ge=0)
         parallel_episodes: int = Field(default=1, gt=0)
+        global_circuit_breaker_threshold: float = Field(
+            default=0.5,
+            gt=0.0,
+            allow_inf_nan=False,
+            description=(
+                "Fraction of simultaneously tripped slots needed to stop collection. "
+                "0.5 includes exactly half; 1.0 requires all slots. Values greater "
+                "than 1 disable only this breaker, not episode/time/capacity limits."
+            ),
+        )
 
     generation: Optional[GenerationConfig] = None
 
@@ -738,10 +783,11 @@ class AppConfig(BaseModel):
         warmup_ratio: float = Field(default=0.0, ge=0, le=1)
         lr_scheduler_type: str = "linear"
         weight_decay: float = Field(default=0.0, ge=0)
-        inner_loss: Literal["sft", "dft", "asft"] = "sft"
+        inner_loss: InnerLoss = "sft"
+        inner_loss_schedule: Optional[List[LossStep]] = None
         dft_impl: Literal["fused", "trl"] = "fused"
         asft_mode: Literal["dft", "sft+kl", "asft"] = "asft"
-        asft_kl_weight: float = Field(default=0.0, ge=0)
+        asft_kl_weight: float = Field(default=0.0, ge=0, allow_inf_nan=False)
         asft_kl_direction: Literal["forward", "reverse"] = "forward"
         asft_reference_policy: Literal["disable_adapter", "frozen_copy"] = (
             "disable_adapter"
@@ -749,7 +795,9 @@ class AppConfig(BaseModel):
         asft_streaming: Literal["off", "auto", "batch", "seq", "hybrid"] = "off"
         asft_ref_microbatch_size: Optional[int] = Field(default=None, gt=0)
         asft_seq_chunk_size: Optional[int] = Field(default=None, gt=0)
-        asft_normalize_by: Literal["tokens", "weights"] = "tokens"
+        asft_normalization_semantics: Literal[
+            "token_count_v0", "microbatch_weights_v0", "update_weights_v1"
+        ] = "token_count_v0"
         lora_rank: int = Field(default=32, gt=0)
         lora_alpha: int = Field(default=32, gt=0)
         lora_dropout: float = Field(default=0.0, ge=0, lt=1)
@@ -762,6 +810,7 @@ class AppConfig(BaseModel):
         rehearsal_prompt: str = "Continue the following passage"
         rehearsal_prompt_chars: int = Field(default=256, gt=0)
         rehearsal_max_chars: int = Field(default=2048, gt=0)
+        strict_no_truncation: bool = False
         max_seq_length: int = Field(default=2048, gt=0)
         adapter_output_dir: str = "./models/adapters"
         wandb_project: Optional[str] = None
@@ -775,6 +824,45 @@ class AppConfig(BaseModel):
             if self.max_steps != -1 and self.max_steps <= 0:
                 raise ValueError("training.max_steps must be -1 or positive")
             return self
+
+        def validate_inner_loss_schedule(self, num_generations: int) -> None:
+            schedule = self.inner_loss_schedule
+            if schedule is None:
+                return
+            training_steps = max(0, num_generations - 1)
+            if len(schedule) < training_steps:
+                raise ValueError(
+                    f"inner_loss_schedule has {len(schedule)} entries but "
+                    f"{training_steps} training steps run (num_generations-1)"
+                )
+            for generation_id, step in enumerate(schedule):
+                if step.loss != "asft":
+                    continue
+                if self.asft_mode == "dft":
+                    raise ValueError(
+                        f"inner_loss_schedule generation {generation_id} selects ASFT "
+                        "but training.asft_mode='dft' disables its KL anchor"
+                    )
+                kl_weight = (
+                    step.asft_kl_weight
+                    if step.asft_kl_weight is not None else self.asft_kl_weight
+                )
+                if not math.isfinite(kl_weight) or kl_weight <= 0:
+                    raise ValueError(
+                        f"inner_loss_schedule generation {generation_id} selects ASFT, "
+                        "so its effective KL weight must be finite and greater than zero"
+                    )
+
+        def resolve_inner_loss_step(self, generation_id: int) -> tuple[InnerLoss, float]:
+            if generation_id < 0:
+                raise IndexError("generation_id must be non-negative")
+            if self.inner_loss_schedule is None:
+                return self.inner_loss, self.asft_kl_weight
+            step = self.inner_loss_schedule[generation_id]
+            return step.loss, (
+                step.asft_kl_weight
+                if step.asft_kl_weight is not None else self.asft_kl_weight
+            )
 
     training: Optional[TrainingConfig] = None
 
@@ -902,6 +990,13 @@ class AppConfig(BaseModel):
                 "[vllm] and [sglang] CUDA_VISIBLE_DEVICES overlap; concurrent "
                 "managed inference backends must use disjoint GPU sets"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_loss_schedule(self) -> "AppConfig":
+        orchestration = self.orchestration or self.OrchestrationConfig()
+        training = self.training or self.TrainingConfig()
+        training.validate_inner_loss_schedule(orchestration.num_generations)
         return self
 
     @model_validator(mode="after")

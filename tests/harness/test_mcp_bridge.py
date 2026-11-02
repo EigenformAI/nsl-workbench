@@ -238,6 +238,39 @@ def test_inprocess_invoke_accepts_synthetic_invocation_not_advertised(
     assert pairs[0][0].input == {"x": 1}
 
 
+def test_allowlist_rejection_precedes_dispatch_and_budget_reservation(tmp_path: Path) -> None:
+    cap = Capability(name="run_python", description="exec")
+    ctx = _build_ctx(tmp_path, capabilities=[cap])
+    ctx.budget_ledger = BudgetLedger(BudgetConstraints(max_task_tool_calls=1))
+    bridge = CapabilityMcpBridge(ctx, enforce_allowlist=True)
+
+    rejected = bridge.invoke(CapabilityInvocation(name="report_result"))
+
+    assert rejected.success is False
+    assert "report_result" in rejected.error and "not permitted" in rejected.error
+    assert ctx.task.calls == []
+    assert ctx.recorder.capability_pairs() == []
+    assert ctx.budget_ledger.snapshot().task_tool_calls_used == 0
+    assert ctx.budget_ledger.exhausted() is None
+    assert bridge.invoke(CapabilityInvocation(name="run_python")).success is True
+
+
+def test_enforced_allowlist_preserves_named_budget_locality(tmp_path: Path) -> None:
+    caps = [Capability(name=name, description=name) for name in ("probe", "report")]
+    ctx = _build_ctx(tmp_path, capabilities=caps)
+    ctx.budget_ledger = BudgetLedger(
+        BudgetConstraints(max_task_tool_calls=3, max_task_tool_calls_by_name={"probe": 1})
+    )
+    bridge = CapabilityMcpBridge(ctx, enforce_allowlist=True)
+
+    assert bridge.invoke(CapabilityInvocation(name="probe")).success is True
+    rejected = bridge.invoke(CapabilityInvocation(name="probe"))
+    assert rejected.error == "budget exhausted: task_tool_calls_by_name:probe"
+    assert bridge.invoke(CapabilityInvocation(name="report")).success is True
+    assert ctx.budget_ledger.exhausted() is None
+    assert ctx.budget_ledger.snapshot().task_tool_calls_used == 2
+
+
 def test_invoke_exception_still_pairs_events_and_returns_error(tmp_path: Path) -> None:
     cap = Capability(name="analyzer", description="read")
     ctx = _build_ctx(tmp_path, capabilities=[cap])

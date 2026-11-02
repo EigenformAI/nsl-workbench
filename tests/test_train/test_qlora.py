@@ -242,6 +242,45 @@ class TestLoadSftDataset(unittest.TestCase):
             )
         )
 
+    def test_strict_truncation_checks_generated_and_rehearsal_rows(self):
+        from src.train.qlora import _load_sft_dataset
+
+        tokenizer = self._make_tokenizer()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "rows.jsonl"
+            for prompt, response, error in (
+                ("hi", "x" * 100, "longer than"),
+                ("x" * 100, "ok", "fully truncated"),
+            ):
+                self._make_jsonl([self._make_row(prompt=prompt, raw_response=response)], path)
+                with self.subTest(source="generated", error=error):
+                    if prompt == "hi":
+                        self.assertEqual(len(_load_sft_dataset([path], tokenizer, max_seq_length=40)), 1)
+                    self.assertEqual(len(_load_sft_dataset(
+                        [path], tokenizer, strict_no_truncation=True,
+                    )), 1)
+                    with self.assertRaisesRegex(ValueError, error):
+                        _load_sft_dataset(
+                            [path], tokenizer, max_seq_length=40,
+                            strict_no_truncation=True,
+                        )
+
+            self._make_jsonl([self._make_row(prompt="hi", raw_response="ok")], path)
+            with patch("src.train.qlora.load_dataset", return_value=[{"text": "x" * 120}]):
+                for prompt_chars, error in ((1, "longer than"), (100, "fully truncated")):
+                    kwargs = dict(
+                        max_seq_length=40, rehearsal_dataset="demo/rehearsal",
+                        rehearsal_rows_per_epoch=1, rehearsal_prompt="Continue",
+                        rehearsal_prompt_chars=prompt_chars,
+                    )
+                    with self.subTest(source="rehearsal", error=error):
+                        default_rows = _load_sft_dataset([path], tokenizer, **kwargs)
+                        self.assertEqual(len(default_rows), 2 if prompt_chars == 1 else 1)
+                        with self.assertRaisesRegex(ValueError, error):
+                            _load_sft_dataset(
+                                [path], tokenizer, strict_no_truncation=True, **kwargs
+                            )
+
     def test_load_sft_dataset_drops_rehearsal_rows_with_fully_truncated_response(self):
         from src.train.qlora import _load_sft_dataset
 
@@ -268,6 +307,32 @@ class TestLoadSftDataset(unittest.TestCase):
         kept = "".join(chr(token_id) for token_id in dataset[0]["input_ids"])
         self.assertIn("hi", kept)
         self.assertNotIn("Continue the following", kept)
+
+    def test_rehearsal_accounting_counts_retained_rows_and_causally_shifted_tokens(self):
+        from src.train.qlora import _load_sft_dataset
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "rows.jsonl"
+            self._make_jsonl([self._make_row()], path)
+            with (
+                patch("src.train.qlora._build_query_response_sft_row", side_effect=[
+                    {"input_ids": [1, 2, 3], "completion_mask": [1, 0, 1]},
+                    {"input_ids": [1, 2, 3, 4], "completion_mask": [0, 0, 0, 1]},
+                    {"input_ids": [1, 2, 3], "completion_mask": [1, 1, 1]},
+                ]),
+                patch("src.train.qlora.load_dataset", return_value=[{"text": "ref"}]),
+            ):
+                stats = {}
+                rows = _load_sft_dataset(
+                    [path], self._make_tokenizer(), max_seq_length=3, virtual_epochs=2,
+                    rehearsal_dataset="example/ref", rehearsal_rows_per_epoch=1, stats=stats,
+                )
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(stats, {
+            "selected_retained_count": 2, "rehearsal_retained_count": 1,
+            "selected_valid_token_count": 2, "rehearsal_valid_token_count": 2,
+            "valid_token_count": 4,
+        })
 
     def test_load_sft_dataset_keeps_all_rows_when_max_seq_length_unset(self):
         from src.train.qlora import _load_sft_dataset
@@ -546,6 +611,61 @@ class TestQloraGpuCleanup(unittest.TestCase):
 
 
 class TestTrainSft(unittest.TestCase):
+    def test_parent_tracking_initializes_before_training_and_finishes_on_success_or_error(self):
+        from src.train import qlora
+
+        parent = {
+            "config": {"nsl": {"run_id": "parent"}, "rollout": {"task": {"theta": 0.6}}},
+            "summary": {"success_rate": 0.5},
+            "run": {"group": "parent", "name": "arm-g0-finetune", "job_type": "finetune", "tags": []},
+        }
+        for fails in (False, True):
+            with self.subTest(fails=fails), tempfile.TemporaryDirectory() as tmpdir:
+                path = Path(tmpdir) / "rows.jsonl"
+                self._make_jsonl([self._make_row()], path)
+                model = MagicMock()
+                wandb_run = SimpleNamespace(
+                    id="child", name="arm-g0-finetune", group="parent", url="https://wandb/run",
+                    summary={}, finish=MagicMock(),
+                )
+                wandb = MagicMock()
+                wandb.init.return_value = wandb_run
+                trainer = MagicMock()
+
+                def train(**kwargs):
+                    wandb.init.assert_called_once()
+                    tracking = wandb.init.call_args.kwargs["config"]
+                    self.assertEqual(tracking["rollout"]["task"]["theta"], 0.6)
+                    self.assertEqual(tracking["finetune"]["inner_loss"], "sft")
+                    self.assertIs(tracking["finetune"]["strict_no_truncation"], False)
+                    if fails:
+                        raise RuntimeError("training failed")
+
+                trainer.train.side_effect = train
+                with (
+                    patch.dict(os.environ, {"WANDB_API_KEY": "key", "NSL_WANDB_METADATA": json.dumps(parent)}),
+                    patch.dict(sys.modules, {"wandb": wandb}),
+                    patch.object(qlora, "_load_base_model", return_value=(model, self._make_tokenizer())),
+                    patch.object(qlora, "_attach_lora_adapter", return_value=model),
+                    patch.object(qlora, "_dataset_from_list", side_effect=qlora._SimpleDataset.from_list),
+                    patch.object(qlora, "_load_sft_classes", return_value=(qlora._SimpleSFTConfig, MagicMock(return_value=trainer))),
+                ):
+                    kwargs = dict(
+                        base_model="test/base", training_data_paths=[str(path)],
+                        output_dir=str(Path(tmpdir) / "adapter"), wandb_project="demo", max_steps=1,
+                    )
+                    if fails:
+                        with self.assertRaisesRegex(RuntimeError, "training failed"):
+                            self._run_train_sft(qlora.train_sft, **kwargs)
+                    else:
+                        output = self._run_train_sft(qlora.train_sft, **kwargs)
+                        metadata = json.loads((output / "training_info.json").read_text())
+                        self.assertEqual(metadata["wandb_run_id"], "child")
+                        self.assertEqual(metadata["selected_row_count"], 1)
+                        self.assertEqual(metadata["rehearsal_retained_count"], 0)
+                self.assertEqual(wandb_run.summary["rollout/success_rate"], 0.5)
+                wandb_run.finish.assert_called_once_with(exit_code=1 if fails else 0)
+
     def test_batch_evidence_keeps_nonfinite_loss_and_counts_labels_popped_by_trainer(self):
         import torch
         from src.train.qlora import _observe_training_batches
@@ -1109,7 +1229,7 @@ class TestTrainSft(unittest.TestCase):
                 asft_streaming="batch",
                 asft_ref_microbatch_size=2,
                 asft_seq_chunk_size=128,
-                asft_normalize_by="weights",
+                asft_normalization_semantics="microbatch_weights_v0",
             )
 
             metadata = json.loads(
@@ -1125,7 +1245,7 @@ class TestTrainSft(unittest.TestCase):
             fake_trainer_cls.call_args.kwargs["reference_policy"],
             "disable_adapter",
         )
-        self.assertEqual(fake_trainer_cls.call_args.kwargs["normalize_by"], "weights")
+        self.assertEqual(fake_trainer_cls.call_args.kwargs["normalization_semantics"], "microbatch_weights_v0")
         streaming_config = fake_trainer_cls.call_args.kwargs["asft_streaming"]
         self.assertEqual(
             streaming_config.kwargs,
@@ -1145,7 +1265,7 @@ class TestTrainSft(unittest.TestCase):
         self.assertEqual(metadata["asft_streaming"], "batch")
         self.assertEqual(metadata["asft_ref_microbatch_size"], 2)
         self.assertEqual(metadata["asft_seq_chunk_size"], 128)
-        self.assertEqual(metadata["asft_normalize_by"], "weights")
+        self.assertEqual(metadata["asft_normalization_semantics"], "microbatch_weights_v0")
         self.assertEqual(
             metadata["trainer_class"], "src.train.asft_trainer.ASFTTrainer"
         )
@@ -1158,6 +1278,7 @@ class TestTrainSft(unittest.TestCase):
         # Force the local-module import to fail and ensure the cached globals do
         # not short-circuit the import attempt.
         with (
+            patch.object(qlora, "SFTConfig", qlora._SimpleSFTConfig),
             patch.object(qlora, "ASFTTrainer", None),
             patch.object(qlora, "ASFTStreamingConfig", None),
             patch.dict(sys.modules, {"src.train.asft_trainer": None}),
@@ -1481,8 +1602,9 @@ class TestTrainSft(unittest.TestCase):
                 "3",
                 "--asft-seq-chunk-size",
                 "256",
-                "--asft-normalize-by",
-                "weights",
+                "--asft-normalization-semantics",
+                "microbatch_weights_v0",
+                "--strict-no-truncation",
             ]
         )
         self.assertEqual(args.inner_loss, "asft")
@@ -1493,7 +1615,20 @@ class TestTrainSft(unittest.TestCase):
         self.assertEqual(args.asft_streaming, "hybrid")
         self.assertEqual(args.asft_ref_microbatch_size, 3)
         self.assertEqual(args.asft_seq_chunk_size, 256)
-        self.assertEqual(args.asft_normalize_by, "weights")
+        self.assertEqual(args.asft_normalization_semantics, "microbatch_weights_v0")
+        self.assertTrue(args.strict_no_truncation)
+
+    @patch("src.train.qlora.train_sft", return_value=Path("adapter"))
+    def test_cli_forwards_strict_and_explicit_update_normalization(self, train):
+        from src.train.qlora import main
+
+        self.assertEqual(main([
+            "--base-model", "test/base", "--training-data", "rows.jsonl",
+            "--output", "adapter", "--strict-no-truncation", "--inner-loss", "asft",
+            "--asft-normalization-semantics", "update_weights_v1",
+        ]), 0)
+        self.assertIs(train.call_args.kwargs["strict_no_truncation"], True)
+        self.assertEqual(train.call_args.kwargs["asft_normalization_semantics"], "update_weights_v1")
 
     def test_train_sft_cli_multiple_training_data(self):
         """CLI should accept multiple --training-data arguments."""

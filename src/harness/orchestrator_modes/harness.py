@@ -14,6 +14,7 @@ All configuration is read from ``ctx.config.settings`` (the
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from dataclasses import dataclass, field
@@ -35,6 +36,7 @@ from src.harness.base import HarnessError, HarnessSpec
 from src.harness.context import HarnessContext
 from src.harness.orchestrator_modes.memory import CrossEpisodeScratchpad
 from src.harness.transcript import HarnessTranscript, TerminationCategory
+from src.harness.workflow_driver import _resolve_allowlist
 from src.observability.types import PhaseMetric
 from src.parsing.code_extraction import WhenNoMatch, extract_code_block
 from src.parsing.repetition_guard import (
@@ -47,6 +49,8 @@ from src.task.types import (
     CapabilityInvocation,
     CapabilityResult,
     EpisodeArtifacts,
+    Workflow,
+    WorkflowStep,
 )
 from src.typing.config import ModeConfig
 from src.typing.message import Message
@@ -103,6 +107,61 @@ class _EpisodeState:
     episode_id: str
     current_step: int = 1
     mode_history: list[dict[str, Any]] = field(default_factory=list)
+
+
+# Workflow intent comes from the task; these wrappers only coordinate work.
+_WORKFLOW_ORCHESTRATOR_TEMPLATE = """\
+You are orchestrating a multi-phase task, progressing forward through a fixed \
+sequence of phases. You are currently in phase "{phase_name}" and cannot return \
+to an earlier phase.
+
+Phase objective:
+{phase_prompt}
+
+You cannot run code yourself. Decide whether to ACT (delegate one unit of work \
+within this phase) or ADVANCE (this phase's objective is met — move on).
+
+Action budget: {budget_remaining}/{total_budget} remaining.
+Scratchpad:
+{scratchpad_content}
+
+Respond with:
+DECISION: <ACT|ADVANCE>
+INSTRUCTION: <if ACT, what the worker should do this turn>
+REASONING: <why>
+"""
+
+_WORKFLOW_WORKER_TEMPLATE = """\
+You are working in phase "{phase_name}".
+
+{phase_prompt}
+
+Orchestrator instruction: {instruction}
+
+Scratchpad:
+{scratchpad_content}
+"""
+
+
+@dataclass
+class _WorkflowDecision:
+    kind: str  # "ACT" | "ADVANCE"
+    instruction: str
+    reasoning: str
+    raw_response: str
+    duration_ms: float = 0.0
+
+
+@dataclass
+class _WorkerTurnResult:
+    success: bool
+    content: str
+    invocations: list[CapabilityInvocation]
+    results: list[CapabilityResult]
+    terminator_invoked: bool = False
+    execution_result: dict[str, Any] | None = None
+    error_message: str | None = None
+    duration_ms: float = 0.0
 
 
 def _edit_distance(a: str, b: str) -> int:
@@ -493,6 +552,542 @@ class OrchestratorModeHarness(HarnessSpec):
             self._ctx = None
             self._episode_state = None
             self._episode_budget = None
+
+    # --- Native workflow execution ---
+
+    def run_workflow(
+        self,
+        workflow: Workflow,
+        ctx: HarnessContext,
+    ) -> HarnessTranscript:
+        """Run task-owned phases over one shared orchestrator decision budget.
+
+        Native execution supports inherited-context chains. Error routing and
+        isolated context require a harness that implements those semantics.
+        Config-owned modes are only used by the legacy flat episode loop.
+        """
+        self._ctx = ctx
+        try:
+            workflow.validate(set(ctx.capabilities_view))
+            for step in workflow.steps:
+                if step.on_error is not None:
+                    raise HarnessError(
+                        f"OrchestratorModeHarness: workflow step {step.name!r} "
+                        "uses unsupported on_error routing"
+                    )
+                if step.context_mode == "isolated":
+                    raise HarnessError(
+                        f"OrchestratorModeHarness: workflow step {step.name!r} "
+                        "uses unsupported context_mode='isolated'"
+                    )
+
+            settings = ctx.config.settings
+            max_iters = int(settings.get("max_harness_iterations", 12))
+            tool_output_max = int(settings.get("tool_output_max_chars", 20000))
+
+            rep_config_raw: Any = settings.get("repetition_guard", {}) or {}
+            if isinstance(rep_config_raw, RepetitionGuardConfig):
+                rep_config = rep_config_raw
+            else:
+                rep_config = RepetitionGuardConfig(**dict(rep_config_raw))
+            repetition = RepetitionDetector(config=rep_config)
+
+            steps = workflow.topological_order()
+            terminal_index = len(steps) - 1
+            cursor = 0
+            budget = _ActionBudget(total=max_iters)
+            # Reserve an opportunity to enter the final phase, not a scoring
+            # guarantee: unfinished intermediate phases may be skipped.
+            reservation = max(1, math.ceil(0.15 * budget.total))
+            state = _EpisodeState(episode_id=ctx.episode_id)
+            self._episode_budget = budget
+            self._episode_state = state
+
+            # Workflow episodes must not inherit prior completion reports.
+            # The legacy flat run_episode path retains cross-episode memory.
+            ctx.harness_session["scratchpad"] = None
+            scratchpad = self._scratchpad(ctx)
+            scratchpad.append(f"Started with budget {budget.total}", ctx.episode_id)
+
+            invocations: list[CapabilityInvocation] = []
+            results: list[CapabilityResult] = []
+            last_content: str | None = None
+            completed = False
+
+            termination_category: TerminationCategory = "agent_failure"
+            termination_reason = "loop exited without explicit termination"
+
+            while not budget.is_exhausted():
+                if ctx.cancel_event.is_set():
+                    termination_category = "wall_clock"
+                    termination_reason = "cancel_event set"
+                    break
+
+                if cursor < terminal_index and budget.remaining <= reservation:
+                    ctx.recorder.log_decision(
+                        "workflow_force_advance",
+                        {
+                            "from_step": steps[cursor].name,
+                            "to_step": steps[terminal_index].name,
+                            "budget_remaining": budget.remaining,
+                            "reservation": reservation,
+                        },
+                    )
+                    cursor = terminal_index
+
+                step = steps[cursor]
+                phase_allowlist = _resolve_allowlist(step, ctx)
+                phase_ctx = (
+                    ctx.with_capability_allowlist(phase_allowlist, workflow=workflow)
+                    .with_step_constraints(step.name)
+                    .with_workflow_step(step.name)
+                )
+                override = (
+                    ctx.constraints.step_overrides.get(step.name)
+                    if ctx.constraints is not None
+                    else None
+                )
+                ledger = ctx.budget_ledger
+                if override is not None and ledger is not None:
+                    ledger.push_step(step.name, override.budgets)
+                try:
+                    if override is not None and ledger is not None:
+                        ctx.recorder.log_state(
+                            "budget_ledger_step_push",
+                            {
+                                "step": step.name,
+                                "effective_limit": override.budgets.max_task_tool_calls,
+                                "used": ledger.snapshot().task_tool_calls_used,
+                            },
+                        )
+                    ctx.recorder.set_label("last_workflow_step", step.name)
+                    ctx.recorder.log_state(
+                        "phase_start",
+                        {
+                            "step": step.name,
+                            "cursor": cursor,
+                            "budget_remaining": budget.remaining,
+                            "budget_total": budget.total,
+                        },
+                    )
+                    decision = self._run_workflow_orchestrator(
+                        ctx=phase_ctx,
+                        step=step,
+                        budget=budget,
+                        repetition=repetition,
+                    )
+                    ctx.recorder.log_decision(
+                        "phase_decision",
+                        {
+                            "step": step.name,
+                            "decision": decision.kind,
+                            "instruction_preview": decision.instruction[:200],
+                        },
+                    )
+
+                    if decision.kind == "ADVANCE":
+                        state.current_step += 1
+                        if cursor >= terminal_index:
+                            completed = True
+                            break
+                        cursor += 1
+                        continue
+
+                    turn = self._run_workflow_worker(
+                        ctx=phase_ctx,
+                        state=state,
+                        step=step,
+                        instruction=decision.instruction,
+                        phase_allowlist=phase_allowlist,
+                        tool_output_max=tool_output_max,
+                        repetition=repetition,
+                    )
+                    invocations.extend(turn.invocations)
+                    results.extend(turn.results)
+                    last_content = turn.content
+                    state.mode_history.append(
+                        {
+                            "step": state.current_step,
+                            "phase": step.name,
+                            "instruction": decision.instruction,
+                            "success": turn.success,
+                            "terminator": turn.terminator_invoked,
+                            "duration_ms": turn.duration_ms,
+                            "orchestrator_duration_ms": decision.duration_ms,
+                            "timestamp": datetime.now().isoformat(),
+                        }
+                    )
+                    state.current_step += 1
+
+                    # A reasoning-only phase needs just one worker turn.
+                    advance = turn.terminator_invoked or not phase_allowlist
+                    if advance:
+                        if cursor >= terminal_index:
+                            completed = True
+                            break
+                        cursor += 1
+
+                except ContextOverflowError as exc:
+                    termination_category = "context_overflow"
+                    termination_reason = str(exc)
+                    ctx.recorder.log_warning("context_overflow", {"detail": str(exc)})
+                    scratchpad.append("Episode aborted: context overflow")
+                    break
+                except RepetitionCollapseError as exc:
+                    # Non-final stalls advance rather than stranding the final
+                    # phase; a collapse in the final phase ends the episode.
+                    if cursor < terminal_index:
+                        ctx.recorder.log_warning(
+                            "repetition_collapse_force_advance",
+                            {"step": step.name, "detail": str(exc)},
+                        )
+                        repetition = RepetitionDetector(config=rep_config)
+                        cursor += 1
+                        continue
+                    termination_category = "repetition_collapse"
+                    termination_reason = str(exc)
+                    ctx.recorder.log_warning(
+                        "repetition_collapse", {"detail": str(exc)}
+                    )
+                    scratchpad.append("Episode aborted: repetition collapse")
+                    break
+                except InferenceTimeoutError:
+                    raise
+                except HarnessError:
+                    if ctx.cancel_event.is_set():
+                        termination_category = "wall_clock"
+                        termination_reason = "cancel_event set"
+                        break
+                    raise
+                except Exception as exc:
+                    logger.error(f"Workflow phase error: {exc}")
+                    ctx.recorder.log_warning("step_error", {"detail": str(exc)})
+                    scratchpad.append(f"Episode failed: {exc}")
+                    termination_category = "harness_error"
+                    termination_reason = str(exc)
+                    break
+                finally:
+                    if override is not None and ledger is not None:
+                        snap = ledger.pop_step(step.name)
+                        ctx.recorder.log_state(
+                            "budget_ledger_step_pop",
+                            {
+                                "step": step.name,
+                                "effective_limit": snap.task_tool_calls_limit,
+                                "used": snap.task_tool_calls_used,
+                            },
+                        )
+            else:
+                termination_category = "budget_exhausted"
+                termination_reason = (
+                    f"action budget of {budget.total} decisions consumed"
+                )
+
+            if budget.is_exhausted() and termination_category == "agent_failure":
+                termination_category = "budget_exhausted"
+                termination_reason = (
+                    f"action budget of {budget.total} decisions consumed"
+                )
+
+            artifacts = EpisodeArtifacts(
+                capability_invocations=invocations,
+                capability_results=results,
+                final_response=last_content,
+            )
+
+            # Transcript completion does not determine the task's reward.
+            if termination_category == "agent_failure" and (
+                completed or any(r.success for r in results)
+            ):
+                termination_category = "success"
+
+            return HarnessTranscript(
+                artifacts=artifacts,
+                llm_turns=0,
+                termination_reason=termination_reason,
+                termination_category=termination_category,
+                extra={
+                    "scratchpad_final": scratchpad.get_content(),
+                    "mode_history": state.mode_history,
+                    "harness_iterations_count": state.current_step - 1,
+                    "last_workflow_step": steps[cursor].name,
+                },
+            )
+        finally:
+            self._ctx = None
+            self._episode_state = None
+            self._episode_budget = None
+
+    def _run_workflow_orchestrator(
+        self,
+        *,
+        ctx: HarnessContext,
+        step: WorkflowStep,
+        budget: _ActionBudget,
+        repetition: RepetitionDetector,
+    ) -> _WorkflowDecision:
+        user_prompt = _WORKFLOW_ORCHESTRATOR_TEMPLATE.format(
+            phase_name=step.name,
+            phase_prompt=step.prompt,
+            scratchpad_content=self._scratchpad(ctx).get_content(),
+            budget_remaining=budget.remaining,
+            total_budget=budget.total,
+        )
+        messages: list[Message] = [
+            {
+                "role": "system",
+                "content": _compose_system_prompt(ctx.prompt_spec),
+                "meta": {"episode_id": ctx.episode_id, "phase": "orchestrator"},
+            },
+            {
+                "role": "user",
+                "content": user_prompt,
+                "meta": {"episode_id": ctx.episode_id, "phase": "orchestrator"},
+            },
+        ]
+        started = time.perf_counter()
+        result = ctx.genner.plist_completion(
+            messages,
+            phase="orchestrator",
+            meta={"workflow_step": ctx.workflow_step},
+        )
+        duration_ms = (time.perf_counter() - started) * 1000
+        match result:
+            case Ok(inference_result):
+                raw_response = self._apply_repetition_guard(
+                    repetition, "orchestrator", inference_result.content
+                )
+                decision = self._parse_workflow_decision(raw_response)
+                decision.duration_ms = duration_ms
+                budget.consume(1)
+                self._record_phase_metric(ctx, "orchestrator", duration_ms, True)
+                return decision
+            case Err(error):
+                self._record_phase_metric(
+                    ctx, "orchestrator", duration_ms, False, str(error)
+                )
+                if str(error).startswith(CONTEXT_OVERFLOW_PREFIX):
+                    raise ContextOverflowError(str(error))
+                if str(error).startswith(INFERENCE_TIMEOUT_PREFIX):
+                    raise InferenceTimeoutError(str(error))
+                if str(error).startswith(INFERENCE_UNAVAILABLE_PREFIX):
+                    raise HarnessError(str(error))
+                raise RuntimeError(f"Orchestrator execution failed: {error}")
+        raise RuntimeError("unreachable: Result must be Ok or Err")
+
+    @staticmethod
+    def _parse_workflow_decision(raw_response: str) -> _WorkflowDecision:
+        kind_match = re.search(
+            r"DECISION:\s*\**?\s*(ACT|ADVANCE)\b",
+            raw_response,
+            re.IGNORECASE,
+        )
+        # Parse misses keep working; the reservation still protects entry into
+        # the final phase.
+        kind = kind_match.group(1).upper() if kind_match else "ACT"
+
+        instruction_match = re.search(
+            r"INSTRUCTION:\s*(.+?)(?=\n(?:REASONING|REASON|NOTE|DECISION):|$)",
+            raw_response,
+            re.IGNORECASE | re.DOTALL,
+        )
+        instruction = (
+            instruction_match.group(1).strip() if instruction_match else ""
+        )
+
+        reasoning_match = re.search(
+            r"(?:REASONING|REASON|NOTE):\s*(.+?)$",
+            raw_response,
+            re.IGNORECASE | re.DOTALL,
+        )
+        reasoning = (
+            reasoning_match.group(1).strip()
+            if reasoning_match
+            else "No reasoning provided"
+        )
+        return _WorkflowDecision(
+            kind=kind,
+            instruction=instruction,
+            reasoning=reasoning,
+            raw_response=raw_response,
+        )
+
+    def _run_workflow_worker(
+        self,
+        *,
+        ctx: HarnessContext,
+        state: _EpisodeState,
+        step: WorkflowStep,
+        instruction: str,
+        phase_allowlist: set[str],
+        tool_output_max: int,
+        repetition: RepetitionDetector,
+    ) -> _WorkerTurnResult:
+        user_prompt = _WORKFLOW_WORKER_TEMPLATE.format(
+            phase_name=step.name,
+            phase_prompt=step.prompt,
+            instruction=instruction or "(follow the phase objective above)",
+            scratchpad_content=self._scratchpad(ctx).get_content(),
+        )
+        messages: list[Message] = [
+            {
+                "role": "system",
+                "content": _compose_system_prompt(ctx.prompt_spec),
+                "meta": {"episode_id": ctx.episode_id, "phase": step.name},
+            },
+            {
+                "role": "user",
+                "content": user_prompt,
+                "meta": {"episode_id": ctx.episode_id, "phase": step.name},
+            },
+        ]
+        started = time.perf_counter()
+        result = ctx.genner.plist_completion(
+            messages,
+            phase=step.name,
+            meta={"workflow_step": step.name},
+        )
+        match result:
+            case Ok(inference_result):
+                raw_response = self._apply_repetition_guard(
+                    repetition, step.name, inference_result.content
+                )
+                duration_ms = (time.perf_counter() - started) * 1000
+                bridge = CapabilityMcpBridge(ctx, token="", enforce_allowlist=True)
+                turn_invocations: list[CapabilityInvocation] = []
+                turn_results: list[CapabilityResult] = []
+                execution_result: dict[str, Any] | None = None
+                terminator_invoked = False
+
+                # Task capability declarations identify the code-execution tool.
+                code_cap = next(
+                    (c for c in ctx.prompt_spec.capabilities if c.runs_code), None
+                )
+                if code_cap is not None:
+                    block = extract_code_block(
+                        raw_response,
+                        accepted_langs=[
+                            "python",
+                            "py",
+                            "python3",
+                            "bash",
+                            "shell",
+                            "sh",
+                            "",
+                        ],
+                        fallback=WhenNoMatch.NONE,
+                    )
+                    if block is not None:
+                        code_inv = CapabilityInvocation(
+                            name=code_cap.name,
+                            input={
+                                "code": block.body,
+                                "lang": block.lang or "python",
+                                "timeout_s": int(code_cap.timeout_seconds or 60),
+                            },
+                        )
+                        cap_result = bridge.invoke(code_inv)
+                        turn_invocations.append(code_inv)
+                        turn_results.append(cap_result)
+                        terminator_invoked = (
+                            cap_result.success
+                            and code_inv.name in step.terminator_capabilities
+                        )
+                        execution_result = {
+                            "success": cap_result.success,
+                            "stdout": cap_result.output.get("stdout", "") or "",
+                            "stderr": cap_result.output.get(
+                                "stderr", cap_result.error or ""
+                            )
+                            or "",
+                            "return_code": cap_result.output.get(
+                                "return_code", 0 if cap_result.success else -1
+                            ),
+                            "executed_code": block.body,
+                        }
+
+                # Parse using the real step identity, not a config-owned mode.
+                parsed = (
+                    ctx.task.parse_response(
+                        raw_response,
+                        invoked_capability=step.name,
+                    )
+                    or []
+                )
+                for inv in parsed:
+                    cap_result = bridge.invoke(inv)
+                    turn_invocations.append(inv)
+                    turn_results.append(cap_result)
+                    if (
+                        cap_result.success
+                        and inv.name in step.terminator_capabilities
+                    ):
+                        terminator_invoked = True
+                    if (
+                        execution_result is None
+                        and cap_result.output
+                        and "stdout" in cap_result.output
+                        and "stderr" in cap_result.output
+                    ):
+                        execution_result = {
+                            "success": cap_result.success,
+                            "stdout": cap_result.output.get("stdout", ""),
+                            "stderr": cap_result.output.get("stderr", ""),
+                            "return_code": 0 if cap_result.success else 1,
+                            "executed_code": "",
+                        }
+
+                if execution_result is not None:
+                    execution_result = self._truncate_execution_result(
+                        ctx, state, step.name, execution_result, tool_output_max
+                    )
+                    self._emit_tool_output_observation(
+                        ctx, step.name, execution_result
+                    )
+
+                summary = raw_response
+                if execution_result is not None:
+                    if execution_result["success"] and execution_result["stdout"]:
+                        summary += (
+                            f"\n\nExecution Output:\n{execution_result['stdout']}"
+                        )
+                    elif not execution_result["success"]:
+                        summary += (
+                            f"\n\nExecution Error:\n{execution_result['stderr']}"
+                        )
+                self._update_scratchpad(ctx, step.name, summary)
+
+                self._record_phase_metric(ctx, step.name, duration_ms, True)
+                return _WorkerTurnResult(
+                    success=True,
+                    content=raw_response,
+                    invocations=turn_invocations,
+                    results=turn_results,
+                    terminator_invoked=terminator_invoked,
+                    execution_result=execution_result,
+                    duration_ms=duration_ms,
+                )
+            case Err(error):
+                duration_ms = (time.perf_counter() - started) * 1000
+                self._record_phase_metric(
+                    ctx, step.name, duration_ms, False, str(error)
+                )
+                if str(error).startswith(CONTEXT_OVERFLOW_PREFIX):
+                    raise ContextOverflowError(str(error))
+                if str(error).startswith(INFERENCE_TIMEOUT_PREFIX):
+                    raise InferenceTimeoutError(str(error))
+                if str(error).startswith(INFERENCE_UNAVAILABLE_PREFIX):
+                    raise HarnessError(str(error))
+                logger.error(f"{step.name} worker turn failed: {error}")
+                return _WorkerTurnResult(
+                    success=False,
+                    content=f"{step.name} failed: {error}",
+                    invocations=[],
+                    results=[],
+                    error_message=str(error),
+                    duration_ms=duration_ms,
+                )
+        raise RuntimeError("unreachable: Result must be Ok or Err")
 
     def _scratchpad(self, ctx: HarnessContext) -> CrossEpisodeScratchpad:
         scratchpad = ctx.harness_session.get("scratchpad")

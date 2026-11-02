@@ -174,3 +174,27 @@ def test_parse_response_invocation_dispatches_through_bridge_events(
     assert pairs[0][0].name == "metric_report"
     assert pairs[0][0].input == {"metric": 3.0}
     assert pairs[0][1].output == {"metric": 3.0}
+
+
+def test_flat_loop_keeps_cross_episode_scratchpad(tmp_path: Path) -> None:
+    ctx = _ctx(
+        tmp_path,
+        task=_Task(),
+        response_by_phase={"orchestrator": "MODE: explorer", "explorer": "Results: new"},
+        modes={
+            "explorer": {
+                "prompt": "{instruction}\n{scratchpad_content}",
+                "writes_scratchpad": True,
+                "scratchpad_label": "Results",
+            }
+        },
+    )
+    ctx.harness_session["scratchpad"].append("PRIOR_EPISODE_NOTE")
+
+    transcript = OrchestratorModeHarness({}).run_episode(ctx=ctx)
+
+    prompts = "\n".join(
+        call.args[0][-1]["content"] for call in ctx.genner.inner.plist_completion.call_args_list
+    )
+    assert "PRIOR_EPISODE_NOTE" in prompts
+    assert "PRIOR_EPISODE_NOTE" in transcript.extra["scratchpad_final"]

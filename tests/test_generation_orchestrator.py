@@ -3603,6 +3603,62 @@ class GenerationOrchestratorTests(unittest.TestCase):
         self.assertLessEqual(result.total_episodes_run, 1 + 2 - 1)
         self.assertEqual(observed_stop_events, [False, False])
 
+    def test_parallel_global_breaker_override_preserves_episode_limit(self) -> None:
+        for threshold, tripped_slots, expected_reason in (
+            (0.5, 1, "force_stop"),
+            (1.0, 1, "max_episodes"),
+            (1.0, 2, "force_stop"),
+            (1.1, 2, "max_episodes"),
+        ):
+            with self.subTest(threshold=threshold, tripped_slots=tripped_slots):
+                with TemporaryDirectory() as temp_dir:
+                    base_dir = Path(temp_dir)
+                    config = self.make_config(
+                        base_dir,
+                        parallel_episodes=2,
+                        max_episodes=1,
+                        global_circuit_breaker_threshold=threshold,
+                    )
+                    slots = []
+                    for slot_id in range(2):
+                        manager = MagicMock()
+                        self.configure_manager_mock(manager)
+                        breaker = SlotCircuitBreaker(max_consecutive_failures=1)
+                        if slot_id < tripped_slots:
+                            breaker.record_failure()
+                        slots.append(
+                            WorkerSlot(
+                                slot_id=slot_id,
+                                container_manager=manager,
+                                docker_client=MagicMock(),
+                                circuit_breaker=breaker,
+                                cache_dir=base_dir / f"slot-{slot_id}",
+                            )
+                        )
+                    with (
+                        patch("src.parallel.create_worker_slots", return_value=slots),
+                        patch("src.parallel.teardown_worker_slots"),
+                        patch(
+                            "src.execution.parallel.run_single_episode",
+                            side_effect=lambda *_, **kw: self.make_episode(
+                                kw["episode_index"], row_count=0
+                            ),
+                        ),
+                        patch(
+                            "src.execution.parallel._scoped_parallel_logging",
+                            return_value=nullcontext(),
+                        ),
+                    ):
+                        result = run_generation_parallel(
+                            self.make_backend_runtime(config), generation_id=0
+                        )
+                self.assertEqual(result.termination_reason, expected_reason)
+                if expected_reason == "force_stop":
+                    self.assertEqual(result.total_episodes_run, 0)
+                else:
+                    self.assertGreaterEqual(result.total_episodes_run, 1)
+                    self.assertLessEqual(result.total_episodes_run, 2)
+
     def test_parallel_bootstrap_cap_drains_only_reserved_workers(self) -> None:
         """A bootstrap cap of one permits three pre-reserved completions."""
         barrier = threading.Barrier(3)

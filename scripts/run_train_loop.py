@@ -15,7 +15,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 import docker
 import pydantic
@@ -56,6 +56,10 @@ RUN_FILENAME = "run.json"
 GENERATION_METADATA_FILENAME = "metadata.json"
 TRAINING_INFO_FILENAME = "training_info.json"
 DEFAULT_VLLM_MODELS_URL = "http://127.0.0.1:8000/v1/models"
+_WANDB_SUMMARY_FIELDS = (
+    "training_row_count", "total_episodes_run", "total_successful", "success_rate",
+    "total_score", "total_agent_seconds", "generation_wall_clock_seconds",
+)
 
 
 class CompletedGenerationPublicationError(RuntimeError):
@@ -147,6 +151,99 @@ def _collect_training_window_paths(
 
 def _run_doc_path(generation_root: Path) -> Path:
     return generation_root / RUN_FILENAME
+
+
+def _wandb_arm(config: AppConfig) -> str:
+    if config.vllm is not None and config.vllm.served_model_name:
+        return config.vllm.served_model_name
+    if config.sglang is not None and config.sglang.served_model_name:
+        return config.sglang.served_model_name
+    return "nsl"
+
+
+def _redact_absolute_tracking_path(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    candidate = value
+    prefix, separator, remainder = value.partition(":")
+    if separator and prefix in {"llama", "sglang", "vllm"}:
+        candidate = remainder
+    if candidate.startswith("file://") or Path(candidate).expanduser().is_absolute():
+        return None
+    return value
+
+
+def _build_wandb_metadata(
+    generation_config: AppConfig,
+    *,
+    identity_fields: Mapping[str, Any],
+    source_generation_id: int,
+    generation_task: TaskSpec,
+    source_generation_summary: Mapping[str, Any],
+    serving_lineage: Mapping[str, Any],
+    hardware_tags: Sequence[str],
+    load_tags: Sequence[str],
+) -> dict[str, Any]:
+    if generation_config.generation is None or generation_config.orchestration is None:
+        raise ValueError("generation and orchestration config are required for W&B metadata")
+    generation = generation_config.generation
+    orchestration = generation_config.orchestration
+    arm = _wandb_arm(generation_config)
+    tracking_config = getattr(generation_task, "tracking_config", None)
+    metadata = {
+        "config": {
+            "nsl": {
+                "schema_version": 1,
+                "run_id": identity_fields.get("run_id"),
+                "source_generation_id": source_generation_id,
+                "target_generation_id": source_generation_id + 1,
+                "num_generations": orchestration.num_generations,
+                "training_window_start_generation_id": max(
+                    0, source_generation_id - orchestration.training_window_size + 1
+                ),
+                "training_window_end_generation_id": source_generation_id,
+                "arm": arm,
+                **{key: identity_fields.get(key) for key in (
+                    "task_class", "task_name", "harness_type", "harness_profile",
+                    "commit_id", "git_dirty",
+                )},
+            },
+            "rollout": {
+                "inference": generation_config.inference.model_dump(),
+                "generation": {
+                    key: getattr(generation, key) for key in (
+                        "target_training_rows", "max_episodes", "max_bootstrap_episodes",
+                        "generation_timeout_s", "variation_strategy", "variation_random_seed",
+                        "parallel_episodes", "global_circuit_breaker_threshold",
+                    )
+                },
+                # Tasks expose only their disclosure-safe, effective settings.
+                "task": dict(tracking_config()) if callable(tracking_config) else {},
+                "serving": {
+                    key: (
+                        _redact_absolute_tracking_path(serving_lineage.get(key))
+                        if key in {"model_name", "request_model"}
+                        else serving_lineage.get(key)
+                    ) for key in (
+                        "backend", "model_name", "request_model", "served_artifact_kind",
+                        "predecessor_generation_id", "external_lora_attested",
+                    )
+                },
+            },
+        },
+        "summary": {
+            key: source_generation_summary[key] for key in _WANDB_SUMMARY_FIELDS
+            if key in source_generation_summary
+        },
+        "run": {
+            "group": identity_fields.get("run_id"),
+            "name": f"{arm}-g{source_generation_id}-finetune",
+            "job_type": "finetune",
+            "tags": list(dict.fromkeys(["self-training", *hardware_tags, *load_tags])),
+        },
+    }
+    json.dumps(metadata)
+    return metadata
 
 
 @contextmanager
@@ -271,6 +368,47 @@ def _training_artifact_complete(artifact_path: Path, export_format: str) -> bool
     return True
 
 
+def _training_objective_settings(training: AppConfig.TrainingConfig) -> dict[str, Any]:
+    settings: dict[str, Any] = {
+        "inner_loss": training.inner_loss,
+        "strict_no_truncation": training.strict_no_truncation,
+    }
+    if training.inner_loss == "dft":
+        settings["dft_impl"] = training.dft_impl
+    if training.inner_loss == "asft":
+        settings.update({
+            field: getattr(training, field) for field in (
+                "asft_mode", "asft_kl_weight", "asft_kl_direction",
+                "asft_reference_policy", "asft_streaming",
+                "asft_normalization_semantics",
+            )
+        })
+    return settings
+
+
+def _validate_training_artifact_loss_step(
+    artifact_path: Path,
+    export_format: str,
+    *,
+    generation_id: int,
+    training: AppConfig.TrainingConfig,
+) -> None:
+    metadata_path = training_metadata_path(artifact_path, export_format)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    conflicts = [
+        f"{field}: recorded {metadata[field]!r}, expected {expected!r}"
+        if field in metadata else f"{field}: missing, expected {expected!r}"
+        for field, expected in _training_objective_settings(training).items()
+        if field not in metadata or metadata[field] != expected
+    ]
+    if conflicts:
+        raise ValueError(
+            f"generation {generation_id}: existing training artifact {artifact_path} "
+            f"has conflicting objective settings ({'; '.join(conflicts)}). "
+            "Use a fresh output directory or run id; existing artifacts are not overwritten."
+        )
+
+
 def _vllm_server_is_ready(models_url: str = DEFAULT_VLLM_MODELS_URL) -> bool:
     return is_http_ready(models_url)
 
@@ -281,6 +419,7 @@ def _invoke_train_sft(
     training_paths: Sequence[Path],
     output_dir: Path,
     export_format: str,
+    wandb_metadata: Mapping[str, Any] | None = None,
 ) -> Path:
     """Run training as a child process so its CUDA memory is reclaimed on exit.
 
@@ -352,6 +491,8 @@ def _invoke_train_sft(
             cmd += ["--rehearsal-seed", str(training.rehearsal_seed)]
     if training.wandb_project:
         cmd += ["--wandb-project", training.wandb_project]
+    if training.strict_no_truncation:
+        cmd += ["--strict-no-truncation"]
     if training.inner_loss == "asft":
         cmd += ["--asft-mode", training.asft_mode]
         cmd += ["--asft-kl-weight", str(training.asft_kl_weight)]
@@ -365,14 +506,26 @@ def _invoke_train_sft(
             ]
         if training.asft_seq_chunk_size is not None:
             cmd += ["--asft-seq-chunk-size", str(training.asft_seq_chunk_size)]
-        cmd += ["--asft-normalize-by", training.asft_normalize_by]
+        cmd += ["--asft-normalization-semantics", training.asft_normalization_semantics]
     for path in training_paths:
         cmd += ["--training-data", str(path)]
+
+    child_env = os.environ.copy()
+    child_env.pop("NSL_WANDB_METADATA", None)
+    child_env.setdefault("WANDB_SILENT", "true")
+    child_env.setdefault("WANDB_CONSOLE", "off")
+    if training.wandb_project and wandb_metadata is not None:
+        child_env["NSL_WANDB_METADATA"] = json.dumps(wandb_metadata)
+        identity = wandb_metadata["run"]
+        child_env["WANDB_RUN_GROUP"] = str(identity["group"])
+        child_env["WANDB_NAME"] = str(identity["name"])
+        child_env["WANDB_JOB_TYPE"] = str(identity["job_type"])
+        child_env["WANDB_TAGS"] = ",".join(identity["tags"])
 
     logger.info("Launching training subprocess: " + " ".join(cmd))
     proc = subprocess.Popen(
         cmd,
-        env=os.environ.copy(),
+        env=child_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -380,12 +533,10 @@ def _invoke_train_sft(
         cwd=str(PROJECT_ROOT),
     )
 
-    stdout_lines: list[str] = []
     assert proc.stdout is not None
     for line in proc.stdout:
         sys.stdout.write(line)
         sys.stdout.flush()
-        stdout_lines.append(line)
     return_code = proc.wait()
 
     if return_code != 0:
@@ -394,11 +545,9 @@ def _invoke_train_sft(
             f"See above for details."
         )
 
-    for line in reversed(stdout_lines):
-        stripped = line.strip()
-        if stripped:
-            return Path(stripped)
-    raise RuntimeError("Training subprocess produced no output; cannot locate artifact")
+    # Logs (including W&B shutdown output) are not an artifact-path protocol.
+    # The caller validates the artifact at the configured --output path.
+    return output_dir
 
 
 def _should_wait_for_vllm_gpu_release(
@@ -572,6 +721,7 @@ def _run_loop_locked(
         raise ValueError("num_generations must be at least 1")
     if config.orchestration.training_window_size < 1:
         raise ValueError("training_window_size must be at least 1")
+    config.training.validate_inner_loss_schedule(config.orchestration.num_generations)
 
     active_run_id = run_id or generate_readable_run_id()
     active_docker_client = (
@@ -772,11 +922,29 @@ def _run_loop_locked(
                 "trained_adapter_dir": None,
                 "trained_artifact_path": None,
                 "training_data_paths": [],
+                "training_inner_loss": None,
+                "training_asft_kl_weight": None,
+                "training_objective": None,
                 "metrics": generation_metrics,
             }
             results.append(generation_result)
 
             if generation_id < num_gens - 1:
+                effective_loss, effective_kl_weight = config.training.resolve_inner_loss_step(
+                    generation_id
+                )
+                training_config = config.model_copy(deep=True)
+                assert training_config.training is not None
+                training_config.training.inner_loss = effective_loss
+                training_config.training.asft_kl_weight = effective_kl_weight
+                training_config.training.inner_loss_schedule = None
+                generation_result["training_inner_loss"] = effective_loss
+                generation_result["training_asft_kl_weight"] = (
+                    effective_kl_weight if effective_loss == "asft" else None
+                )
+                generation_result["training_objective"] = _training_objective_settings(
+                    training_config.training
+                )
                 _try_write_run_doc("in_progress")
 
                 artifact_output_dir = _training_artifact_path(
@@ -796,6 +964,10 @@ def _run_loop_locked(
                 if _training_artifact_complete(
                     artifact_output_dir, training_export_format
                 ):
+                    _validate_training_artifact_loss_step(
+                        artifact_output_dir, training_export_format,
+                        generation_id=generation_id, training=training_config.training,
+                    )
                     trained_artifact_path = artifact_output_dir
                     logger.info(
                         f"Training resumed from disk: artifact={trained_artifact_path}"
@@ -818,11 +990,24 @@ def _run_loop_locked(
                         f"max_steps={config.training.max_steps}\n"
                         f"{'─' * 60}"
                     )
+                    wandb_metadata = None
+                    if config.training.wandb_project:
+                        wandb_metadata = _build_wandb_metadata(
+                            generation_config,
+                            identity_fields=identity_fields,
+                            source_generation_id=generation_id,
+                            generation_task=generation_task,
+                            source_generation_summary=generation_metrics,
+                            serving_lineage=expected_lineage,
+                            hardware_tags=hardware_tags,
+                            load_tags=load_tags,
+                        )
                     trained_artifact_path = _invoke_train_sft(
-                        config,
+                        training_config,
                         training_paths=training_paths,
                         output_dir=artifact_output_dir,
                         export_format=training_export_format,
+                        wandb_metadata=wandb_metadata,
                     )
                     trained_artifact_path = validate_training_artifact(
                         trained_artifact_path,

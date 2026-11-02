@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -54,6 +54,7 @@ class TrainingDataExportContext:
     source_generation_dir: Path
     source_all_episodes_path: Path
     export_recipe_hash: str
+    raw_generation_digest: str | None = None
 
 
 @dataclass
@@ -81,6 +82,132 @@ class TrainingDataTransform(Protocol):
 
 
 @dataclass(frozen=True)
+class PerEpisodeRowCap:
+    max_rows: int
+    keep: str = "random"
+    seed: int = 0
+    algorithm: str = "sha256-rank-v1"
+    namespace: str = "episode-row-cap-v1"
+
+    def __post_init__(self) -> None:
+        if isinstance(self.max_rows, bool) or not isinstance(self.max_rows, int):
+            raise ValueError("max_rows must be an integer")
+        if self.max_rows <= 0:
+            raise ValueError("max_rows must be positive")
+        if self.keep not in {"head", "tail", "even", "random"}:
+            raise ValueError(f"unsupported row cap keep strategy: {self.keep!r}")
+        if isinstance(self.seed, bool) or not isinstance(self.seed, int):
+            raise ValueError("seed must be an integer")
+        if self.algorithm != "sha256-rank-v1":
+            raise ValueError(f"unsupported row cap algorithm: {self.algorithm!r}")
+        if not isinstance(self.namespace, str) or not self.namespace or "\0" in self.namespace:
+            raise ValueError("namespace must be a non-empty string without NUL bytes")
+
+    @property
+    def name(self) -> str:
+        return "PerEpisodeRowCap[v1]"
+
+    def config(self) -> Mapping[str, Any]:
+        config: dict[str, Any] = {"max_rows": self.max_rows, "keep": self.keep}
+        if self.seed != 0:
+            config["seed"] = self.seed
+        if self.algorithm != "sha256-rank-v1":
+            config["algorithm"] = self.algorithm
+        if self.namespace != "episode-row-cap-v1":
+            config["namespace"] = self.namespace
+        return config
+
+    def selection_recipe(self) -> dict[str, Any]:
+        return {
+            "algorithm": self.algorithm,
+            "K": self.max_rows,
+            "transform_seed": self.seed,
+            "namespace": self.namespace,
+        }
+
+    def _rank_digest(
+        self,
+        raw_generation_digest: str,
+        episode_id: str,
+        row_id: str,
+    ) -> str:
+        if "\0" in episode_id or "\0" in row_id:
+            raise ValueError("episode_id and row_id must not contain NUL bytes")
+        rank_input = "\0".join(
+            (self.namespace, str(self.seed), raw_generation_digest, episode_id, row_id)
+        ).encode("utf-8")
+        return hashlib.sha256(rank_input).hexdigest()
+
+    def _select_rows(
+        self,
+        group: EpisodeTrainingRows,
+        raw_generation_digest: str,
+    ) -> list[dict[str, Any]]:
+        rows = sorted(
+            group.rows,
+            key=lambda row: (row["source_row_index"], row["row_id"]),
+        )
+        ranks = {
+            row["row_id"]: self._rank_digest(
+                raw_generation_digest, group.episode_id, row["row_id"]
+            )
+            for row in rows
+        }
+        if len(rows) <= self.max_rows:
+            selected = rows
+        elif self.keep == "head":
+            selected = rows[: self.max_rows]
+        elif self.keep == "tail":
+            selected = rows[-self.max_rows :]
+        elif self.keep == "even":
+            if self.max_rows == 1:
+                selected = rows[:1]
+            else:
+                denominator = self.max_rows - 1
+                positions = [
+                    (index * (len(rows) - 1) + denominator // 2) // denominator
+                    for index in range(self.max_rows)
+                ]
+                selected = [rows[position] for position in positions]
+        else:
+            selected = sorted(
+                rows, key=lambda row: (ranks[row["row_id"]], row["row_id"])
+            )[: self.max_rows]
+        return sorted(
+            selected,
+            key=lambda row: (row["source_row_index"], row["row_id"]),
+        )
+
+    def transform_export_rows(
+        self,
+        context: TrainingDataExportContext,
+        episodes: list[EpisodeTrainingRows],
+    ) -> list[EpisodeTrainingRows]:
+        raw_generation_digest = context.raw_generation_digest
+        if raw_generation_digest is None:
+            raw_generation_digest = _raw_generation_digest(episodes)
+        selected_groups = [
+            (group, self._select_rows(group, raw_generation_digest))
+            for group in episodes
+        ]
+        retained_row_ids = {
+            row["row_id"] for _, rows in selected_groups for row in rows
+        }
+        result: list[EpisodeTrainingRows] = []
+        for group, selected_rows in selected_groups:
+            rows: list[dict[str, Any]] = []
+            for selected_row in selected_rows:
+                row = dict(selected_row)
+                if row["parent_row_id"] not in retained_row_ids:
+                    if row["parent_row_id"] is not None:
+                        row["source_parent_row_id"] = row["parent_row_id"]
+                    row["parent_row_id"] = None
+                rows.append(row)
+            result.append(replace(group, rows=rows))
+        return result
+
+
+@dataclass(frozen=True)
 class ExportRecipe:
     transforms: list[dict[str, Any]]
     recipe_hash: str
@@ -104,6 +231,14 @@ class TrainingDataExport:
 
 def _canonical_json(payload: Any) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _raw_generation_digest(groups: list[EpisodeTrainingRows]) -> str:
+    digest = hashlib.sha256()
+    for group in groups:
+        for row in group.rows:
+            digest.update((_canonical_json(row) + "\n").encode("utf-8"))
+    return digest.hexdigest()
 
 
 def _sha256_text(text: str) -> str:
@@ -146,6 +281,11 @@ def build_export_recipe(
                 "name": name,
                 "config": config_payload,
                 "config_hash": _json_hash(config_payload),
+                **(
+                    {"selection_recipe": transform.selection_recipe()}
+                    if isinstance(transform, PerEpisodeRowCap)
+                    else {}
+                ),
             }
         )
     recipe_payload = {"schema_version": 1, "transforms": transform_specs}
@@ -358,6 +498,7 @@ def build_training_export(
     validate_training_row_groups(groups)
     raw_count = _count_rows(groups)
     source_row_ids = set(_snapshot_row_index(groups))
+    context = replace(context, raw_generation_digest=_raw_generation_digest(groups))
 
     transform_reports: list[dict[str, Any]] = []
     for transform in transforms:
@@ -641,6 +782,7 @@ def resolve_latest_sft_training_rows_path(generation_dir: Path | str) -> Path:
 __all__ = [
     "EpisodeTrainingRows",
     "ExportRecipe",
+    "PerEpisodeRowCap",
     "RowObservabilityHook",
     "TARGET_COUNT_BASIS",
     "TrainingDataExport",
