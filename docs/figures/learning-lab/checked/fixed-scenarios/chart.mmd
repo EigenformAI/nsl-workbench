@@ -1,0 +1,87 @@
+---
+title: "Learning lab: two episode agents per floor, then a checked handoff"
+---
+stateDiagram-v2
+  direction LR
+  state "Legend" as legend {
+    lg0: lab
+    lg1: handoff
+    lg2: done
+    lg3: stopped
+  }
+  class lg0 teal
+  class lg1 yellow
+  class lg2 blue
+  class lg3 pink
+  state "At the same time" as all {
+    state "Agent A" as r0 {
+      s0: Idle
+      s1: Exploring
+      s2: Hypothesising
+      s3: Coding
+      s4: Verifying
+      s5: Rewriting
+      [*] --> s0
+      s0 --> s1: starts an episode, reads committed facts [when Floor is Collecting episodes]
+      s1 --> s2: finishes exploring
+      s2 --> s3: writes a hypothesis
+      s3 --> s4: submits descriptor code
+      s4 --> s5: signal check passes
+      s5 --> s0: commits rows durably, plus a fact if admitted
+      s4 --> s0: signal check fails, no rows
+    }
+    --
+    state "Agent B" as r1 {
+      s6: Idle
+      s7: Exploring
+      s8: Hypothesising
+      s9: Coding
+      s10: Verifying
+      s11: Rewriting
+      [*] --> s6
+      s6 --> s7: starts an episode, reads committed facts [when Floor is Collecting episodes]
+      s7 --> s8: finishes exploring
+      s8 --> s9: writes a hypothesis
+      s9 --> s10: submits descriptor code
+      s10 --> s11: signal check passes
+      s11 --> s6: commits rows durably, plus a fact if admitted
+    }
+    --
+    state "Floor" as r2 {
+      s12: Collecting episodes
+      s13: Floor published
+      s14: Training from the base
+      s15: Checking the candidate
+      s16: Trainer failed
+      s17: Candidate validated
+      s18: Candidate rejected
+      s19: Final floor published
+      [*] --> s12
+      s12 --> s13: publishes the floor [when Agent A is Idle and Agent B is Idle]
+      s13 --> s14: reloads the configured base on published rows
+      s14 --> s15: trainer writes a candidate
+      s14 --> s16: trainer errors
+      s15 --> s17: format and identity checks pass
+      s17 --> s12: next floor opens, serving the candidate
+      s15 --> s18: format or identity checks fail
+      s12 --> s19: publishes the final floor [when Agent A is Idle and Agent B is Idle]
+    }
+  }
+  class s1 teal
+  class s2 teal
+  class s3 teal
+  class s4 teal
+  class s5 teal
+  class s7 teal
+  class s8 teal
+  class s9 teal
+  class s10 teal
+  class s11 teal
+  class s12 teal
+  class s13 yellow
+  class s14 yellow
+  class s15 yellow
+  class s16 pink
+  class s17 yellow
+  class s18 pink
+  class s19 blue

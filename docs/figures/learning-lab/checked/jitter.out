@@ -1,0 +1,4 @@
+materials: 2000 runs; rule violations 0; unfinished 0; longest 46 steps; distinct per-floor totals 1; distinct interleavings/reading patterns 78; runs with both agents at different stations 1979 — OK
+no-archive: 2000 runs; rule violations 0; unfinished 0; longest 46 steps; distinct per-floor totals 1; distinct interleavings/reading patterns 78; runs with both agents at different stations 1965 — OK
+trainer-failure: 2000 runs; rule violations 0; unfinished 0; longest 15 steps; distinct per-floor totals 1; distinct interleavings/reading patterns 6; runs with both agents at different stations 1757 — OK
+invalid-artifact: 2000 runs; rule violations 0; unfinished 0; longest 32 steps; distinct per-floor totals 1; distinct interleavings/reading patterns 18; runs with both agents at different stations 1934 — OK

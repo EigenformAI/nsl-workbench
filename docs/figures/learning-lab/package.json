@@ -1,0 +1,12 @@
+{
+  "name": "learning-lab-process",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test verify/lab-process.test.mjs && node verify/mutants.mjs && node verify/jitter.mjs && node scripts/replay.mjs --check",
+    "parity": "node --max-old-space-size=6000 verify/parity.mjs"
+  },
+  "devDependencies": {
+    "pele": "1.9.0"
+  }
+}

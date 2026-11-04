@@ -1,0 +1,13 @@
+original: tests pass
+mutant 1 (double contribution: commit leaves the agent rewriting): rejected by 13 check(s), e.g. "an episode contributes once: no second commit, no second episode for the slot on this floor"
+mutant 2 (publication with active agents): rejected by 3 check(s), e.g. "the floor cannot publish while either agent is mid-episode"
+mutant 3 (training before publication): rejected by 3 check(s), e.g. "training starts only after publication"
+mutant 4 (serving an unvalidated candidate): rejected by 2 check(s), e.g. "only a validated candidate is served, and only it opens a floor"
+mutant 5 (rejected candidate still validated): rejected by 2 check(s), e.g. "a rejected candidate or a trainer error leaves serving and the floor count unchanged"
+mutant 6 (training after the final floor): rejected by 7 check(s), e.g. "the final floor publishes without training"
+mutant 7 (facts without a shared archive): rejected by 2 check(s), e.g. "a task without a shared archive never gains facts, but still gains rows"
+mutant 8 (rows only for admitted rewrites (graph/row conflation)): rejected by 3 check(s), e.g. "a task without a shared archive never gains facts, but still gains rows"
+mutant 9 (fact visible at verification, before commit): rejected by 5 check(s), e.g. "a task without a shared archive never gains facts, but still gains rows"
+mutant 10 (agents read knowledge continuously): rejected by 1 check(s), e.g. "agents read shared knowledge at episode start, not continuously"
+mutant 11 (training continues from the serving adapter): rejected by 2 check(s), e.g. "training always reloads the fixed configured base on this floor's published rows"
+mutant 12 (eligibility revealed before verification): rejected by 1 check(s), e.g. "outcome booleans stay hidden until the step that decides them"

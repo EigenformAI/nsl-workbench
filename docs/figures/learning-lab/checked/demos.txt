@@ -1,0 +1,293 @@
+# materials: Materials task with a shared archive (model-derived demo, 46 steps)
+ 0. Start: floor 1 is serving the configured base
+    floor 1/1 collecting | A:Idle B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 1. Agent A starts its episode and reads the committed facts
+    floor 1/1 collecting | A:Exploring B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 2. Agent A finishes exploring public evidence
+    floor 1/1 collecting | A:Hypothesising B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 3. Agent A writes a hypothesis
+    floor 1/1 collecting | A:Coding B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 4. Agent B starts its episode and reads the committed facts
+    floor 1/1 collecting | A:Coding B:Exploring | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 5. Agent A submits descriptor code
+    floor 1/1 collecting | A:Verifying B:Exploring | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 6. Agent B finishes exploring public evidence
+    floor 1/1 collecting | A:Verifying B:Hypothesising | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 7. Agent A's signal check passes; rewrite is training-eligible
+    floor 1/1 collecting | A:Rewriting B:Hypothesising | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 8. Agent B writes a hypothesis
+    floor 1/1 collecting | A:Rewriting B:Coding | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 9. Agent A commits its rewrite: 2 rows, archive admits a fact
+    floor 1/1 collecting | A:Idle B:Coding | rows 2 (all 2) | facts 1 | serving configured-base | candidate none
+10. Agent B submits descriptor code
+    floor 1/1 collecting | A:Idle B:Verifying | rows 2 (all 2) | facts 1 | serving configured-base | candidate none
+11. Agent B's signal check passes; rewrite is training-eligible
+    floor 1/1 collecting | A:Idle B:Rewriting | rows 2 (all 2) | facts 1 | serving configured-base | candidate none
+12. Agent B commits its rewrite: 1 row, archive does not admit (duplicate of an admitted fact)
+    floor 1/1 collecting | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate none
+13. all workers settled; the floor publishes
+    floor 1/1 published | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate none
+14. training reloads the configured base with this floor's published rows
+    floor 1/1 training | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate training
+15. the trainer writes a candidate artifact
+    floor 1/1 candidate | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate candidate
+16. the candidate passes format, identity and configuration checks
+    floor 1/1 validated | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate valid
+17. floor 2 opens, serving the validated candidate
+    floor 2/2 collecting | A:Idle B:Idle | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+18. Agent B starts its episode and reads the committed facts
+    floor 2/2 collecting | A:Idle B:Exploring | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+19. Agent B finishes exploring public evidence
+    floor 2/2 collecting | A:Idle B:Hypothesising | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+20. Agent B writes a hypothesis
+    floor 2/2 collecting | A:Idle B:Coding | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+21. Agent B submits descriptor code
+    floor 2/2 collecting | A:Idle B:Verifying | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+22. Agent B's signal check passes; rewrite is training-eligible
+    floor 2/2 collecting | A:Idle B:Rewriting | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+23. Agent B commits its rewrite: 1 row, archive admits a fact
+    floor 2/2 collecting | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+24. Agent A starts its episode and reads the committed facts
+    floor 2/2 collecting | A:Exploring B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+25. Agent A finishes exploring public evidence
+    floor 2/2 collecting | A:Hypothesising B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+26. Agent A writes a hypothesis
+    floor 2/2 collecting | A:Coding B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+27. Agent A submits descriptor code
+    floor 2/2 collecting | A:Verifying B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+28. Agent A's signal check fails; the episode ends without rows
+    floor 2/2 collecting | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+29. all workers settled; the floor publishes
+    floor 2/2 published | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+30. training reloads the configured base with this floor's published rows
+    floor 2/2 training | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate training
+31. the trainer writes a candidate artifact
+    floor 2/2 candidate | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate candidate
+32. the candidate passes format, identity and configuration checks
+    floor 2/2 validated | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate valid
+33. floor 3 opens, serving the validated candidate
+    floor 3/3 collecting | A:Idle B:Idle | rows 0 (all 4) | facts 2 | serving adapter-from-floor-1 | candidate none
+34. Agent B starts its episode and reads the committed facts
+    floor 3/3 collecting | A:Idle B:Exploring | rows 0 (all 4) | facts 2 | serving adapter-from-floor-1 | candidate none
+35. Agent B finishes exploring public evidence
+    floor 3/3 collecting | A:Idle B:Hypothesising | rows 0 (all 4) | facts 2 | serving adapter-from-floor-1 | candidate none
+36. Agent B writes a hypothesis
+    floor 3/3 collecting | A:Idle B:Coding | rows 0 (all 4) | facts 2 | serving adapter-from-floor-1 | candidate none
+37. Agent A starts its episode and reads the committed facts
+    floor 3/3 collecting | A:Exploring B:Coding | rows 0 (all 4) | facts 2 | serving adapter-from-floor-1 | candidate none
+38. Agent B submits descriptor code
+    floor 3/3 collecting | A:Exploring B:Verifying | rows 0 (all 4) | facts 2 | serving adapter-from-floor-1 | candidate none
+39. Agent A finishes exploring public evidence
+    floor 3/3 collecting | A:Hypothesising B:Verifying | rows 0 (all 4) | facts 2 | serving adapter-from-floor-1 | candidate none
+40. Agent B's signal check passes; rewrite is training-eligible
+    floor 3/3 collecting | A:Hypothesising B:Rewriting | rows 0 (all 4) | facts 2 | serving adapter-from-floor-1 | candidate none
+41. Agent A writes a hypothesis
+    floor 3/3 collecting | A:Coding B:Rewriting | rows 0 (all 4) | facts 2 | serving adapter-from-floor-1 | candidate none
+42. Agent B commits its rewrite: 2 rows, archive does not admit (marginal gain too small)
+    floor 3/3 collecting | A:Coding B:Idle | rows 2 (all 6) | facts 2 | serving adapter-from-floor-1 | candidate none
+43. Agent A submits descriptor code
+    floor 3/3 collecting | A:Verifying B:Idle | rows 2 (all 6) | facts 2 | serving adapter-from-floor-1 | candidate none
+44. Agent A's signal check passes; rewrite is training-eligible
+    floor 3/3 collecting | A:Rewriting B:Idle | rows 2 (all 6) | facts 2 | serving adapter-from-floor-1 | candidate none
+45. Agent A commits its rewrite: 1 row, archive admits a fact
+    floor 3/3 collecting | A:Idle B:Idle | rows 3 (all 7) | facts 3 | serving adapter-from-floor-1 | candidate none
+46. all workers settled; the final floor publishes (no training follows)
+    floor 3/3 complete | A:Idle B:Idle | rows 3 (all 7) | facts 3 | serving adapter-from-floor-1 | candidate none
+
+# no-archive: Generic task without a shared archive (model-derived demo, 46 steps)
+ 0. Start: floor 1 is serving the configured base
+    floor 1/1 collecting | A:Idle B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 1. Agent A starts its episode and reads the committed facts
+    floor 1/1 collecting | A:Exploring B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 2. Agent A finishes exploring public evidence
+    floor 1/1 collecting | A:Hypothesising B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 3. Agent A writes a hypothesis
+    floor 1/1 collecting | A:Coding B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 4. Agent B starts its episode and reads the committed facts
+    floor 1/1 collecting | A:Coding B:Exploring | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 5. Agent A submits descriptor code
+    floor 1/1 collecting | A:Verifying B:Exploring | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 6. Agent B finishes exploring public evidence
+    floor 1/1 collecting | A:Verifying B:Hypothesising | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 7. Agent A's signal check passes; rewrite is training-eligible
+    floor 1/1 collecting | A:Rewriting B:Hypothesising | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 8. Agent B writes a hypothesis
+    floor 1/1 collecting | A:Rewriting B:Coding | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 9. Agent A commits its rewrite: 2 rows, no shared archive
+    floor 1/1 collecting | A:Idle B:Coding | rows 2 (all 2) | facts 0 | serving configured-base | candidate none
+10. Agent B submits descriptor code
+    floor 1/1 collecting | A:Idle B:Verifying | rows 2 (all 2) | facts 0 | serving configured-base | candidate none
+11. Agent B's signal check passes; rewrite is training-eligible
+    floor 1/1 collecting | A:Idle B:Rewriting | rows 2 (all 2) | facts 0 | serving configured-base | candidate none
+12. Agent B commits its rewrite: 1 row, no shared archive
+    floor 1/1 collecting | A:Idle B:Idle | rows 3 (all 3) | facts 0 | serving configured-base | candidate none
+13. all workers settled; the floor publishes
+    floor 1/1 published | A:Idle B:Idle | rows 3 (all 3) | facts 0 | serving configured-base | candidate none
+14. training reloads the configured base with this floor's published rows
+    floor 1/1 training | A:Idle B:Idle | rows 3 (all 3) | facts 0 | serving configured-base | candidate training
+15. the trainer writes a candidate artifact
+    floor 1/1 candidate | A:Idle B:Idle | rows 3 (all 3) | facts 0 | serving configured-base | candidate candidate
+16. the candidate passes format, identity and configuration checks
+    floor 1/1 validated | A:Idle B:Idle | rows 3 (all 3) | facts 0 | serving configured-base | candidate valid
+17. floor 2 opens, serving the validated candidate
+    floor 2/2 collecting | A:Idle B:Idle | rows 0 (all 3) | facts 0 | serving adapter-from-floor-0 | candidate none
+18. Agent B starts its episode and reads the committed facts
+    floor 2/2 collecting | A:Idle B:Exploring | rows 0 (all 3) | facts 0 | serving adapter-from-floor-0 | candidate none
+19. Agent B finishes exploring public evidence
+    floor 2/2 collecting | A:Idle B:Hypothesising | rows 0 (all 3) | facts 0 | serving adapter-from-floor-0 | candidate none
+20. Agent B writes a hypothesis
+    floor 2/2 collecting | A:Idle B:Coding | rows 0 (all 3) | facts 0 | serving adapter-from-floor-0 | candidate none
+21. Agent B submits descriptor code
+    floor 2/2 collecting | A:Idle B:Verifying | rows 0 (all 3) | facts 0 | serving adapter-from-floor-0 | candidate none
+22. Agent B's signal check passes; rewrite is training-eligible
+    floor 2/2 collecting | A:Idle B:Rewriting | rows 0 (all 3) | facts 0 | serving adapter-from-floor-0 | candidate none
+23. Agent B commits its rewrite: 1 row, no shared archive
+    floor 2/2 collecting | A:Idle B:Idle | rows 1 (all 4) | facts 0 | serving adapter-from-floor-0 | candidate none
+24. Agent A starts its episode and reads the committed facts
+    floor 2/2 collecting | A:Exploring B:Idle | rows 1 (all 4) | facts 0 | serving adapter-from-floor-0 | candidate none
+25. Agent A finishes exploring public evidence
+    floor 2/2 collecting | A:Hypothesising B:Idle | rows 1 (all 4) | facts 0 | serving adapter-from-floor-0 | candidate none
+26. Agent A writes a hypothesis
+    floor 2/2 collecting | A:Coding B:Idle | rows 1 (all 4) | facts 0 | serving adapter-from-floor-0 | candidate none
+27. Agent A submits descriptor code
+    floor 2/2 collecting | A:Verifying B:Idle | rows 1 (all 4) | facts 0 | serving adapter-from-floor-0 | candidate none
+28. Agent A's signal check fails; the episode ends without rows
+    floor 2/2 collecting | A:Idle B:Idle | rows 1 (all 4) | facts 0 | serving adapter-from-floor-0 | candidate none
+29. all workers settled; the floor publishes
+    floor 2/2 published | A:Idle B:Idle | rows 1 (all 4) | facts 0 | serving adapter-from-floor-0 | candidate none
+30. training reloads the configured base with this floor's published rows
+    floor 2/2 training | A:Idle B:Idle | rows 1 (all 4) | facts 0 | serving adapter-from-floor-0 | candidate training
+31. the trainer writes a candidate artifact
+    floor 2/2 candidate | A:Idle B:Idle | rows 1 (all 4) | facts 0 | serving adapter-from-floor-0 | candidate candidate
+32. the candidate passes format, identity and configuration checks
+    floor 2/2 validated | A:Idle B:Idle | rows 1 (all 4) | facts 0 | serving adapter-from-floor-0 | candidate valid
+33. floor 3 opens, serving the validated candidate
+    floor 3/3 collecting | A:Idle B:Idle | rows 0 (all 4) | facts 0 | serving adapter-from-floor-1 | candidate none
+34. Agent B starts its episode and reads the committed facts
+    floor 3/3 collecting | A:Idle B:Exploring | rows 0 (all 4) | facts 0 | serving adapter-from-floor-1 | candidate none
+35. Agent B finishes exploring public evidence
+    floor 3/3 collecting | A:Idle B:Hypothesising | rows 0 (all 4) | facts 0 | serving adapter-from-floor-1 | candidate none
+36. Agent B writes a hypothesis
+    floor 3/3 collecting | A:Idle B:Coding | rows 0 (all 4) | facts 0 | serving adapter-from-floor-1 | candidate none
+37. Agent A starts its episode and reads the committed facts
+    floor 3/3 collecting | A:Exploring B:Coding | rows 0 (all 4) | facts 0 | serving adapter-from-floor-1 | candidate none
+38. Agent B submits descriptor code
+    floor 3/3 collecting | A:Exploring B:Verifying | rows 0 (all 4) | facts 0 | serving adapter-from-floor-1 | candidate none
+39. Agent A finishes exploring public evidence
+    floor 3/3 collecting | A:Hypothesising B:Verifying | rows 0 (all 4) | facts 0 | serving adapter-from-floor-1 | candidate none
+40. Agent B's signal check passes; rewrite is training-eligible
+    floor 3/3 collecting | A:Hypothesising B:Rewriting | rows 0 (all 4) | facts 0 | serving adapter-from-floor-1 | candidate none
+41. Agent A writes a hypothesis
+    floor 3/3 collecting | A:Coding B:Rewriting | rows 0 (all 4) | facts 0 | serving adapter-from-floor-1 | candidate none
+42. Agent B commits its rewrite: 2 rows, no shared archive
+    floor 3/3 collecting | A:Coding B:Idle | rows 2 (all 6) | facts 0 | serving adapter-from-floor-1 | candidate none
+43. Agent A submits descriptor code
+    floor 3/3 collecting | A:Verifying B:Idle | rows 2 (all 6) | facts 0 | serving adapter-from-floor-1 | candidate none
+44. Agent A's signal check passes; rewrite is training-eligible
+    floor 3/3 collecting | A:Rewriting B:Idle | rows 2 (all 6) | facts 0 | serving adapter-from-floor-1 | candidate none
+45. Agent A commits its rewrite: 1 row, no shared archive
+    floor 3/3 collecting | A:Idle B:Idle | rows 3 (all 7) | facts 0 | serving adapter-from-floor-1 | candidate none
+46. all workers settled; the final floor publishes (no training follows)
+    floor 3/3 complete | A:Idle B:Idle | rows 3 (all 7) | facts 0 | serving adapter-from-floor-1 | candidate none
+
+# trainer-failure: Trainer fails after the first floor (model-derived demo, 15 steps)
+ 0. Start: floor 1 is serving the configured base
+    floor 1/1 collecting | A:Idle B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 1. Agent A starts its episode and reads the committed facts
+    floor 1/1 collecting | A:Exploring B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 2. Agent A finishes exploring public evidence
+    floor 1/1 collecting | A:Hypothesising B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 3. Agent A writes a hypothesis
+    floor 1/1 collecting | A:Coding B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 4. Agent B starts its episode and reads the committed facts
+    floor 1/1 collecting | A:Coding B:Exploring | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 5. Agent A submits descriptor code
+    floor 1/1 collecting | A:Verifying B:Exploring | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 6. Agent B finishes exploring public evidence
+    floor 1/1 collecting | A:Verifying B:Hypothesising | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 7. Agent A's signal check passes; rewrite is training-eligible
+    floor 1/1 collecting | A:Rewriting B:Hypothesising | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 8. Agent B writes a hypothesis
+    floor 1/1 collecting | A:Rewriting B:Coding | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 9. Agent A commits its rewrite: 2 rows, archive admits a fact
+    floor 1/1 collecting | A:Idle B:Coding | rows 2 (all 2) | facts 1 | serving configured-base | candidate none
+10. Agent B submits descriptor code
+    floor 1/1 collecting | A:Idle B:Verifying | rows 2 (all 2) | facts 1 | serving configured-base | candidate none
+11. Agent B's signal check passes; rewrite is training-eligible
+    floor 1/1 collecting | A:Idle B:Rewriting | rows 2 (all 2) | facts 1 | serving configured-base | candidate none
+12. Agent B commits its rewrite: 1 row, archive does not admit (duplicate of an admitted fact)
+    floor 1/1 collecting | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate none
+13. all workers settled; the floor publishes
+    floor 1/1 published | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate none
+14. training reloads the configured base with this floor's published rows
+    floor 1/1 training | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate training
+15. the trainer errors; no candidate
+    floor 1/1 trainer-failed | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate trainer-error
+
+# invalid-artifact: Second candidate fails validation (model-derived demo, 32 steps)
+ 0. Start: floor 1 is serving the configured base
+    floor 1/1 collecting | A:Idle B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 1. Agent A starts its episode and reads the committed facts
+    floor 1/1 collecting | A:Exploring B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 2. Agent A finishes exploring public evidence
+    floor 1/1 collecting | A:Hypothesising B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 3. Agent A writes a hypothesis
+    floor 1/1 collecting | A:Coding B:Idle | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 4. Agent B starts its episode and reads the committed facts
+    floor 1/1 collecting | A:Coding B:Exploring | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 5. Agent A submits descriptor code
+    floor 1/1 collecting | A:Verifying B:Exploring | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 6. Agent B finishes exploring public evidence
+    floor 1/1 collecting | A:Verifying B:Hypothesising | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 7. Agent A's signal check passes; rewrite is training-eligible
+    floor 1/1 collecting | A:Rewriting B:Hypothesising | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 8. Agent B writes a hypothesis
+    floor 1/1 collecting | A:Rewriting B:Coding | rows 0 (all 0) | facts 0 | serving configured-base | candidate none
+ 9. Agent A commits its rewrite: 2 rows, archive admits a fact
+    floor 1/1 collecting | A:Idle B:Coding | rows 2 (all 2) | facts 1 | serving configured-base | candidate none
+10. Agent B submits descriptor code
+    floor 1/1 collecting | A:Idle B:Verifying | rows 2 (all 2) | facts 1 | serving configured-base | candidate none
+11. Agent B's signal check passes; rewrite is training-eligible
+    floor 1/1 collecting | A:Idle B:Rewriting | rows 2 (all 2) | facts 1 | serving configured-base | candidate none
+12. Agent B commits its rewrite: 1 row, archive does not admit (duplicate of an admitted fact)
+    floor 1/1 collecting | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate none
+13. all workers settled; the floor publishes
+    floor 1/1 published | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate none
+14. training reloads the configured base with this floor's published rows
+    floor 1/1 training | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate training
+15. the trainer writes a candidate artifact
+    floor 1/1 candidate | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate candidate
+16. the candidate passes format, identity and configuration checks
+    floor 1/1 validated | A:Idle B:Idle | rows 3 (all 3) | facts 1 | serving configured-base | candidate valid
+17. floor 2 opens, serving the validated candidate
+    floor 2/2 collecting | A:Idle B:Idle | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+18. Agent B starts its episode and reads the committed facts
+    floor 2/2 collecting | A:Idle B:Exploring | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+19. Agent B finishes exploring public evidence
+    floor 2/2 collecting | A:Idle B:Hypothesising | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+20. Agent B writes a hypothesis
+    floor 2/2 collecting | A:Idle B:Coding | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+21. Agent B submits descriptor code
+    floor 2/2 collecting | A:Idle B:Verifying | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+22. Agent B's signal check passes; rewrite is training-eligible
+    floor 2/2 collecting | A:Idle B:Rewriting | rows 0 (all 3) | facts 1 | serving adapter-from-floor-0 | candidate none
+23. Agent B commits its rewrite: 1 row, archive admits a fact
+    floor 2/2 collecting | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+24. Agent A starts its episode and reads the committed facts
+    floor 2/2 collecting | A:Exploring B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+25. Agent A finishes exploring public evidence
+    floor 2/2 collecting | A:Hypothesising B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+26. Agent A writes a hypothesis
+    floor 2/2 collecting | A:Coding B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+27. Agent A submits descriptor code
+    floor 2/2 collecting | A:Verifying B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+28. Agent A's signal check fails; the episode ends without rows
+    floor 2/2 collecting | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+29. all workers settled; the floor publishes
+    floor 2/2 published | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate none
+30. training reloads the configured base with this floor's published rows
+    floor 2/2 training | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate training
+31. the trainer writes a candidate artifact
+    floor 2/2 candidate | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate candidate
+32. the candidate fails validation; serving is unchanged
+    floor 2/2 artifact-rejected | A:Idle B:Idle | rows 1 (all 4) | facts 2 | serving adapter-from-floor-0 | candidate invalid

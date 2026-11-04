@@ -1,0 +1,12 @@
+fixed-scenarios:
+  scenarios: materials, no-archive, trainer-failure, invalid-artifact
+  states: JS 477, TLC 477; steps: JS 779, TLC 779 (+4 terminal stutters)
+  TLC graph: dead ends outside terminal phases 0; cycles none; longest schedule 46 steps; misplaced stutters 0
+  chart: 0 reachable state regions missing from chart.mmd
+  concurrency: 168 states with both agents mid-episode at different stations; 306 states where both agents can act
+  OK: JavaScript and TLC graphs are identical
+free-outcomes:
+  scenarios: free-outcomes, free-outcomes-no-archive
+  states: JS 218636, TLC 218636; steps: JS 345742, TLC 345742 (+39090 terminal stutters)
+  TLC graph: dead ends outside terminal phases 0; cycles none; longest schedule 47 steps; misplaced stutters 0
+  OK: JavaScript and TLC graphs are identical
