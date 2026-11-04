@@ -264,7 +264,9 @@ NoDoubleContribution ==
 
 NoGraphWithoutArchive == ~Graph(scn) => facts = {}
 
-\* Agents read only committed facts, and a fact's parents were committed earlier.
+\* Contexts and parents hold only committed facts, never the fact itself. That
+\* contexts are read only at episode start follows from StartEpisode being the
+\* only action that sets ctx; this invariant does not check it.
 ContextFromCommittedFacts ==
   /\ \A a \in Agents : ctx[a] \subseteq FactIds
   /\ \A a \in Agents : stage[a] = "idle" => (ctx[a] = {} /\ ep[a] = -1)

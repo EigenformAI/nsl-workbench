@@ -9,5 +9,6 @@ mutant 7 (facts without a shared archive): rejected by 2 check(s), e.g. "a task 
 mutant 8 (rows only for admitted rewrites (graph/row conflation)): rejected by 3 check(s), e.g. "a task without a shared archive never gains facts, but still gains rows"
 mutant 9 (fact visible at verification, before commit): rejected by 5 check(s), e.g. "a task without a shared archive never gains facts, but still gains rows"
 mutant 10 (agents read knowledge continuously): rejected by 1 check(s), e.g. "agents read shared knowledge at episode start, not continuously"
-mutant 11 (training continues from the serving adapter): rejected by 2 check(s), e.g. "training always reloads the fixed configured base on this floor's published rows"
-mutant 12 (eligibility revealed before verification): rejected by 1 check(s), e.g. "outcome booleans stay hidden until the step that decides them"
+mutant 11 (fact parents taken at commit, not at episode start): rejected by 1 check(s), e.g. "agents read shared knowledge at episode start, not continuously"
+mutant 12 (training continues from the serving adapter): rejected by 2 check(s), e.g. "training always reloads the fixed configured base on this floor's published rows"
+mutant 13 (eligibility revealed before verification): rejected by 1 check(s), e.g. "outcome booleans stay hidden until the step that decides them"

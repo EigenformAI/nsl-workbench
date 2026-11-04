@@ -95,8 +95,16 @@ terminal state.
   checks. More floors do not imply a better model. No private scores appear in
   snapshots.
 - **Graph abstraction.** The shared knowledge graph is a conceptual view of
-  admitted archive records and their parent links. A fact's parents are all
-  facts the agent read at episode start.
+  admitted archive records and their parent links. The model simplifies those
+  links: a fact's parents are all facts the agent read at episode start, not a
+  chosen subset.
+- **Parity scope.** Parity is exact over the fields both the module and the
+  TLA+ model share (`toModelVars`). JavaScript-only fields, such as reasons and
+  agent names on records, are covered by `checkRules` and the behaviour tests.
+- **Start-only reading.** `ContextFromCommittedFacts` checks that contexts and
+  parents hold only committed facts. That a context is read only at episode
+  start is guaranteed by the actions, and is checked by a behaviour test and a
+  mutant, not by a TLC invariant.
 - **Demos are not traces.** `makeDemo()` applies the transition function under
   a fixed schedule. It is a model-derived demo, not a recorded TLC trace.
   Parity shows that every demo step is a TLC step, because every reachable
@@ -140,7 +148,7 @@ node scripts/replay.mjs --check
 
 `verify/mutants.mjs` copies the module with one rule removed per mutant, for
 example "rows only for admitted rewrites". The behaviour tests must fail for
-each of the 12 mutants. `checked/mutants.out` records each one as rejected.
+each of the 13 mutants. `checked/mutants.out` records each one as rejected.
 
 ## Credits
 

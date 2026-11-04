@@ -1,21 +1,21 @@
-✔ an episode contributes once: no second commit, no second episode for the slot on this floor (2.885191ms)
-✔ the floor cannot publish while either agent is mid-episode (0.811029ms)
-✔ the floor cannot publish before every slot has run its episode (0.264409ms)
-✔ training starts only after publication (1.141524ms)
-✔ only a validated candidate is served, and only it opens a floor (0.647747ms)
-✔ a rejected candidate or a trainer error leaves serving and the floor count unchanged (3.55943ms)
-✔ the final floor publishes without training (1.470449ms)
-✔ training always reloads the fixed configured base on this floor's published rows (1.103011ms)
-✔ a task without a shared archive never gains facts, but still gains rows (9.515935ms)
-✔ row eligibility and archive admission are separate outcomes (1.165476ms)
-✔ a fact appears only at the durable commit, not at verification (1.455468ms)
-✔ agents read shared knowledge at episode start, not continuously (2.355274ms)
-✔ outcome booleans stay hidden until the step that decides them (0.342966ms)
-✔ both agents can be active at different stations and advance independently (0.476516ms)
-✔ every reachable state of every fixed scenario satisfies the rules (18.36992ms)
-✔ the rule checker rejects corrupted snapshots (1.074989ms)
-✔ demos are deterministic, follow the transition function, and keep full floor history (12.560939ms)
-✔ transition does not mutate its input (0.26955ms)
+✔ an episode contributes once: no second commit, no second episode for the slot on this floor (5.287182ms)
+✔ the floor cannot publish while either agent is mid-episode (0.873045ms)
+✔ the floor cannot publish before every slot has run its episode (0.348026ms)
+✔ training starts only after publication (1.020196ms)
+✔ only a validated candidate is served, and only it opens a floor (0.663189ms)
+✔ a rejected candidate or a trainer error leaves serving and the floor count unchanged (2.124232ms)
+✔ the final floor publishes without training (1.000974ms)
+✔ training always reloads the fixed configured base on this floor's published rows (0.985423ms)
+✔ a task without a shared archive never gains facts, but still gains rows (7.17439ms)
+✔ row eligibility and archive admission are separate outcomes (1.158766ms)
+✔ a fact appears only at the durable commit, not at verification (0.386619ms)
+✔ agents read shared knowledge at episode start, not continuously (2.321322ms)
+✔ outcome booleans stay hidden until the step that decides them (0.439253ms)
+✔ both agents can be active at different stations and advance independently (0.318314ms)
+✔ every reachable state of every fixed scenario satisfies the rules (23.949966ms)
+✔ the rule checker rejects corrupted snapshots (1.066189ms)
+✔ demos are deterministic, follow the transition function, and keep full floor history (14.369593ms)
+✔ transition does not mutate its input (0.179853ms)
 ℹ tests 18
 ℹ suites 0
 ℹ pass 18
@@ -23,4 +23,4 @@
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 158.925507
+ℹ duration_ms 158.557602

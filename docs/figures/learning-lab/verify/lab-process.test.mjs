@@ -157,6 +157,14 @@ test("agents read shared knowledge at episode start, not continuously", () => {
   // B starts before A commits: B's context and its fact's parents exclude A's fact.
   const early = run(L.initialState("materials"), "start:A", "start:B", "advance:A", "advance:A", "advance:A", "verify-pass:A", "commit:A");
   assert.deepEqual(early.agents.B.context, []);
+  // Both admitted on one floor (free outcomes): B's fact keeps the parents B
+  // read at its start, not the facts present at its commit.
+  const both = run(
+    L.initialState("free-outcomes"),
+    "start:A", "start:B", "advance:A", "advance:A", "advance:A", "verify-pass:A", "commit:A:1:admit",
+    "advance:B", "advance:B", "advance:B", "verify-pass:B", "commit:B:1:admit",
+  );
+  assert.deepEqual(both.knowledge.map((f) => [f.id, f.parents]), [["F0.0", []], ["F0.1", []]]);
   // B starts after A commits: it reads A's fact.
   const late = run(L.initialState("materials"), ...fullEpisode("A"), "verify-pass:A", "commit:A", "start:B");
   assert.deepEqual(late.agents.B.context, ["F0.0"]);

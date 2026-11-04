@@ -5,7 +5,9 @@
 // It is a pure ES module with no DOM or Node APIs, so it runs unchanged in a
 // browser (`<script type="module">`) and in Node. It mirrors
 // `model/LearningLab.tla` action for action; `verify/parity.mjs` compares the
-// two state graphs exactly.
+// two state graphs exactly over the fields both share (see toModelVars).
+// JS-only fields (reasons, fact ids on episodes, agent names on records) are
+// covered by checkRules() and the behaviour tests.
 //
 // The model is bounded: two episode slots, three generation floors, one
 // episode per slot per floor, and fixed (scenario-chosen) verification,
@@ -234,7 +236,7 @@ export function enabledActions(state) {
   if (state.phase === "collecting") {
     for (const a of AGENTS) {
       const ag = state.agents[a];
-      if (ag.stage === "idle" && !floor.episodes.some((e) => e.agent === a)) {
+      if (ag.stage === "idle" && !floor.episodes.some((e) => e.episode === episodeOf(a))) {
         out.push({
           id: `start:${a}`,
           type: "start",
@@ -502,7 +504,7 @@ export const RULES = Object.freeze({
   FactsOnlyAfterCommit: "A shared fact exists only for a committed, admitted episode",
   NoDoubleContribution: "No episode contributes twice; the tray count equals the sum of episode rows",
   NoGraphWithoutArchive: "A task without a shared archive never gains shared facts",
-  ContextFromCommittedFacts: "An agent reads only facts committed before its episode started",
+  ContextFromCommittedFacts: "An agent's context and a fact's parents hold only committed facts, never the fact itself",
   NoPublishWhileActive: "A floor publishes only after every slot has run its episode and every agent is idle",
   NoTrainingBeforePublish: "Training and candidates exist only for published floors",
   FixedTrainingBase: "Every candidate is trained from the fixed configured base",
@@ -554,6 +556,7 @@ export function checkRules(state) {
     if (g === lastFloor && floor.training.status !== "none") broken.add("NoFinalTraining");
   });
   if (state.floors.length !== state.generation + 1) broken.add("ServeOnlyValidated");
+  if (knowledgeIds.size !== state.knowledge.length) broken.add("NoDoubleContribution");
   if (!scn.graph && state.knowledge.length) broken.add("NoGraphWithoutArchive");
   for (const f of state.knowledge) {
     const e = state.floors[f.floor]?.episodes.find((x) => x.episode === f.episode);

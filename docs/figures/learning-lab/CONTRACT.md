@@ -76,8 +76,8 @@ episodes per floor, 2 rows per episode, and 6 facts.
   phase: "collecting",        // see PHASES
   trainingBase: "configured-base",
   agents: {
-    A: { stage: "explore", episode: 0, context: ["F0.0"] },  // context: fact ids read at episode start
-    B: { stage: "idle", episode: null, context: [] },
+    A: { stage: "idle", episode: null, context: [] },
+    B: { stage: "explore", episode: 1, context: ["F0.0"] },  // context: fact ids read at episode start
   },
   knowledge: [                // persistent across floors; sorted by id
     { id: "F0.0", floor: 0, episode: 0, agent: "A", parents: [] },
@@ -88,14 +88,15 @@ episodes per floor, 2 rows per episode, and 6 facts.
       serving: "configured-base",       // or "adapter-from-floor-N"
       published: false,
       episodes: [                       // issued episodes, sorted by episode index
-        { episode: 0, agent: "A",
+        { episode: 0, agent: "A", status: "rows+fact", eligible: true, rows: 2, fact: "F0.0", reason: null },
+        { episode: 1, agent: "B",
           status: "running",            // running | no-rows | rows | rows+fact
           eligible: null,               // null until Verify, then true or false
           rows: 0,                      // rows added at commit
           fact: null,                   // fact id when admitted
           reason: null },               // reader words for no-rows or not admitted
       ],
-      rowCount: 0,                      // this floor's tray
+      rowCount: 2,                      // this floor's tray
       training: {
         status: "none",                 // none | training | candidate | valid | invalid | trainer-error
         base: null,                     // "configured-base" once a candidate exists
