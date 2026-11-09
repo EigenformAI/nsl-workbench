@@ -33,6 +33,23 @@ MS-agent has network access and a writable `/work` scratch mount. It is not the 
 - [Run and trained-model paths](../scripts/run_train_loop.py)
 - [Generation publications](../src/execution/generation_persistence.py) and [training artifacts](../src/train/artifacts.py)
 
+## Run visualisation
+
+[`export_viz.py`](../scripts/export_viz.py) writes a static page for one materials run:
+
+```bash
+uv run python scripts/export_viz.py \
+	--config config/config-materials-adsorption-train.toml
+```
+
+It reads the archive read-only, plus the blob store, the generation journals, and the dataset registry. It writes `viz.json` and a self-contained `index.html` to `<generation_output_dir>/<run_id>/viz/`. The default run is the latest one in the archive; `--run-id` selects another. Open `index.html` directly in a browser, and rerun the command to refresh it.
+
+The first export also writes `viz-input-groups.json` in the run directory. Later exports reuse it so the input grid keeps its order. Opening a checkpointed WAL archive creates `-wal` and `-shm` files beside it, so the archive directory must be writable. The database file is not modified.
+
+The page shows verifier scores that the agent never sees. The command refuses output inside the compose directory, `public-evidence`, the code cache, and `/data`. Do not copy the output anywhere a task container or prompt can reach. `viz.json` contains hypothesis text, rewrite text, and scores, but no credentials, logs, or labels. Review it before sharing.
+
+Older archives lack trusted parents, rule inputs, process counts, and rewrite text. The page lists these as data gaps. Episodes with a journal record but no archive outcome appear as "No outcome row".
+
 ## Credentials and diagnostic recording
 
 Logging intentionally remains verbatim. There is no automatic credential redaction.

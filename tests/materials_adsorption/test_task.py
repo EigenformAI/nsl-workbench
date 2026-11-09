@@ -1,19 +1,27 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from unittest.mock import MagicMock
 
 import pytest
 
 from src.framework.capability_bridge import CapabilityMcpBridge
-from src.harness.budget import BudgetLedger
+from src.harness.budget import BudgetExhaustion, BudgetLedger
 from src.task.types import (
     CapabilityExecutionContext,
     CapabilityInvocation,
     EpisodeArtifacts,
+    FinalizationContext,
+    TaskReward,
     TrustedEpisodeIdentity,
 )
+from tasks.materials_adsorption.archive import ArchiveStore
 from tasks.materials_adsorption.task import (
+    COMPILE_CALL_LIMIT,
     PROBE_CALL_LIMIT,
     MaterialsAdsorptionTask,
 )
@@ -743,22 +751,571 @@ def test_rule_contract_discloses_probe_and_stage2_without_fold_details(
     assert "fold assignment" not in contract
 
 
-def test_unverified_episode_finalizes_as_incomplete(tmp_path) -> None:
+_PLAN_INPUT = {"summary": "Use the planted public descriptor.", "evidence_aliases": []}
+_HYPOTHESIS_INPUT = {
+    "statement": "More favorable initial chemistry ranks lower energies.",
+    "rationale": "The planted control checks the executable path.",
+    "applicability": "all supplied placements",
+    "discriminating_test": "Compare rankings within each system.",
+    "parent_hypothesis_ids": [],
+}
+
+
+def _scored_task(tmp_path) -> MaterialsAdsorptionTask:
+    dataset_path = tmp_path / "dataset.json"
+    _write_synthetic_dataset(dataset_path)
+    return MaterialsAdsorptionTask(
+        {
+            "archive_path": str(tmp_path / "archive.sqlite"),
+            "blob_dir": str(tmp_path / "blobs"),
+            "dataset_path": str(dataset_path),
+            "allow_uncalibrated_threshold": True,
+            "scorer": {
+                "folds": 4,
+                "complexity_lambda": 0.0,
+                "stage1_threshold": 0.001,
+                "bootstrap_replicates": 20,
+            },
+        }
+    )
+
+
+def _drive_episode(task, context, identity, calls, *, recorder=None):
+    invocations = [CapabilityInvocation(name, payload) for _, name, payload in calls]
+    results = [
+        task.execute_capability(
+            invocation,
+            [],
+            task.list_variations()[0],
+            CapabilityExecutionContext(
+                identity.episode_id,
+                step,
+                context,
+                identity=identity,
+                recorder=recorder,
+            ),
+        )
+        for (step, _, _), invocation in zip(calls, invocations)
+    ]
+    return EpisodeArtifacts(
+        capability_invocations=invocations, capability_results=results
+    )
+
+
+def _commit_and_read_outcome(task, identity, reward):
+    prepared = task.prepare_episode_commit(identity, reward)
+    task.apply_episode_commit(prepared.token, prepared.intent_digest)
+    with closing(sqlite3.connect(task._archive_path)) as connection:
+        stage, admitted, outcome_json = connection.execute(
+            """
+            SELECT rejection_stage, archive_admission, outcome_json FROM outcomes
+            WHERE run_id = ? AND generation_id = ? AND episode_index = ?
+            """,
+            (identity.run_id, identity.generation_id, identity.episode_index),
+        ).fetchone()
+    return stage, bool(admitted), json.loads(outcome_json)
+
+
+@pytest.mark.parametrize(
+    ("milestones", "stage"),
+    [
+        ({}, "explore"),
+        ({"_materials_evidence_plan": _PLAN_INPUT}, "hypothesise"),
+        (
+            {
+                "_materials_evidence_plan": _PLAN_INPUT,
+                "_materials_hypothesis": _HYPOTHESIS_INPUT,
+            },
+            "compile",
+        ),
+        (
+            {
+                "_materials_evidence_plan": _PLAN_INPUT,
+                "_materials_hypothesis": _HYPOTHESIS_INPUT,
+                "_materials_finalized_rule_hash": "finalized-rule",
+            },
+            "submit",
+        ),
+    ],
+)
+def test_unverified_episode_commits_its_furthest_milestone_as_the_stage(
+    tmp_path, milestones, stage
+) -> None:
     task = MaterialsAdsorptionTask(
         {
+            "archive_path": str(tmp_path / "archive.sqlite"),
+            "blob_dir": str(tmp_path / "blobs"),
             "dataset_path": str(tmp_path / "dataset.json"),
             "allow_uncalibrated_threshold": True,
         }
     )
+    context = dict(milestones)
+    identity = TrustedEpisodeIdentity("run", 0, 0, "ep-0")
 
     reward = task.finalize_episode(
         [],
-        task.measure_initial_state([], {}),
-        {},
+        task.measure_initial_state([], context),
+        context,
         EpisodeArtifacts(),
     )
+    committed_stage, admitted, outcome = _commit_and_read_outcome(
+        task, identity, reward
+    )
 
-    assert reward.breakdown["rejection_stage"] == "incomplete"
+    assert not reward.success
+    assert reward.breakdown["rejection_stage"] == stage
+    assert (committed_stage, admitted) == (stage, False)
+    assert outcome["rejection_stage"] == stage
+    assert outcome["materialized"] is False
+
+
+def test_finalize_error_breakdown_commits_an_error_stage_without_episode_fields(
+    tmp_path,
+) -> None:
+    task = MaterialsAdsorptionTask(
+        {
+            "archive_path": str(tmp_path / "archive.sqlite"),
+            "blob_dir": str(tmp_path / "blobs"),
+            "dataset_path": str(tmp_path / "dataset.json"),
+            "allow_uncalibrated_threshold": True,
+        }
+    )
+    identity = TrustedEpisodeIdentity("run", 0, 0, "ep-0")
+
+    stage, admitted, outcome = _commit_and_read_outcome(
+        task, identity, TaskReward(0.0, False, {"error": "finalize failed"})
+    )
+
+    assert (stage, admitted) == ("error", False)
+    assert outcome == {
+        "rejection_stage": "error",
+        "materialized": False,
+        "parent_rule_hashes": None,
+        "referenced_descriptors": None,
+        "process": None,
+        "stop_cause": None,
+        "rewrite": None,
+    }
+
+
+def test_admitted_episode_round_trips_inputs_process_and_rewrite_to_outcomes(
+    tmp_path,
+) -> None:
+    task = _scored_task(tmp_path)
+    population = task.populate(
+        [type("Container", (), {"id": "agent"})()], task.list_variations()[0]
+    )
+    context = population.episode_context
+    task._shard_null_calibration = MagicMock()
+    task._shard_null_calibration.percentile_bin.return_value = "p50"
+    task._shard_null_calibration.universe_percentile.side_effect = [12.5, 87.5]
+    task._attainability_reference = MagicMock()
+    task._attainability_reference.percentile.return_value = 91.25
+    recorder = MagicMock()
+    identity = TrustedEpisodeIdentity("run", 0, 0, "ep-0")
+
+    artifacts = _drive_episode(
+        task,
+        context,
+        identity,
+        [
+            ("explore", "record_evidence_plan", _PLAN_INPUT),
+            ("hypothesise", "record_hypothesis", _HYPOTHESIS_INPUT),
+            ("code", "compile_feature", {"expression": "private_energy"}),
+            (
+                "code",
+                "compile_feature",
+                {"expression": "favorability", "applicable": "coordination > 0"},
+            ),
+            ("code", "probe_feature", {}),
+            ("code", "probe_feature", {}),
+            ("code", "finalize_feature", {}),
+            ("verify", "submit_hypothesis", {}),
+            ("rewrite", "get_accepted_hypothesis", {}),
+            ("rewrite", "submit_rewrite", {"target": "Rank by favorability."}),
+        ],
+        recorder=recorder,
+    )
+    reward = task.finalize_episode(
+        [], task.measure_initial_state([], context), context, artifacts
+    )
+    stage, admitted, outcome = _commit_and_read_outcome(task, identity, reward)
+    ranks = [
+        recorded.kwargs["payload"]["universe_percentile"]
+        for recorded in recorder.log_observation.call_args_list
+        if recorded.kwargs["category"] == "materials_universe_rank"
+    ]
+
+    assert [result.success for result in artifacts.capability_results] == [
+        True,
+        True,
+        False,
+        *[True] * 7,
+    ]
+    assert (stage, admitted) == (None, True)
+    assert ranks == [12.5, 87.5, 91.25]
+    assert outcome == {
+        "rejection_stage": None,
+        "materialized": True,
+        "parent_rule_hashes": [],
+        "referenced_descriptors": ["coordination", "favorability"],
+        "process": {
+            "calls": {
+                "compile_feature": 2,
+                "finalize_feature": 1,
+                "get_accepted_hypothesis": 1,
+                "probe_feature": 2,
+                "record_evidence_plan": 1,
+                "record_hypothesis": 1,
+                "submit_hypothesis": 1,
+                "submit_rewrite": 1,
+            },
+            "compile_attempts": 2,
+            "compile_successes": 1,
+            "first_compile_success_attempt": 2,
+            "probes": 2,
+            "probe_percentiles": [12.5, 87.5],
+            "admission_percentile": 91.25,
+        },
+        "stop_cause": None,
+        "rewrite": "Rank by favorability.",
+    }
+
+
+def test_guard_rejected_episode_round_trips_inputs_and_tool_budget_cause(
+    tmp_path,
+) -> None:
+    task = _scored_task(tmp_path)
+    population = task.populate(
+        [type("Container", (), {"id": "agent"})()], task.list_variations()[0]
+    )
+    context = population.episode_context
+    identity = TrustedEpisodeIdentity("run", 0, 0, "ep-0")
+
+    artifacts = _drive_episode(
+        task,
+        context,
+        identity,
+        [
+            ("explore", "record_evidence_plan", _PLAN_INPUT),
+            ("hypothesise", "record_hypothesis", _HYPOTHESIS_INPUT),
+            (
+                "code",
+                "compile_feature",
+                {"expression": "coordination", "applicable": "favorability > 100"},
+            ),
+            ("code", "finalize_feature", {}),
+            ("verify", "submit_hypothesis", {}),
+            ("rewrite", "submit_rewrite", {"target": "Not eligible."}),
+        ],
+        recorder=MagicMock(),
+    )
+    reward = task.finalize_episode(
+        [],
+        task.measure_initial_state([], context),
+        context,
+        artifacts,
+        finalization_context=FinalizationContext(
+            budget_exhaustion=BudgetExhaustion("task_tool_calls", step="rewrite"),
+            tool_calls_count=44,
+            last_workflow_step="rewrite",
+            identity=identity,
+        ),
+    )
+    stage, admitted, outcome = _commit_and_read_outcome(task, identity, reward)
+
+    assert artifacts.capability_results[-1].error == "not_training_eligible"
+    assert (stage, admitted) == ("guard", False)
+    assert outcome == {
+        "rejection_stage": "guard",
+        "materialized": True,
+        "parent_rule_hashes": [],
+        "referenced_descriptors": ["coordination", "favorability"],
+        "process": {
+            "calls": {
+                "compile_feature": 1,
+                "finalize_feature": 1,
+                "record_evidence_plan": 1,
+                "record_hypothesis": 1,
+                "submit_hypothesis": 1,
+                "submit_rewrite": 1,
+            },
+            "compile_attempts": 1,
+            "compile_successes": 1,
+            "first_compile_success_attempt": 1,
+            "probes": 0,
+            "probe_percentiles": [],
+            "admission_percentile": None,
+        },
+        "stop_cause": "tool_budget",
+        "rewrite": None,
+    }
+
+
+def test_spent_compile_budget_without_a_finalized_feature_is_the_stop_cause(
+    tmp_path,
+) -> None:
+    task = MaterialsAdsorptionTask(
+        {
+            "archive_path": str(tmp_path / "archive.sqlite"),
+            "blob_dir": str(tmp_path / "blobs"),
+            "dataset_path": str(tmp_path / "missing-dataset.json"),
+            "allow_uncalibrated_threshold": True,
+        }
+    )
+    context = {
+        "_materials_evidence_plan": _PLAN_INPUT,
+        "_materials_hypothesis": _HYPOTHESIS_INPUT,
+    }
+    identity = TrustedEpisodeIdentity("run", 0, 0, "ep-0")
+
+    artifacts = _drive_episode(
+        task,
+        context,
+        identity,
+        [("code", "compile_feature", {"expression": 7})] * COMPILE_CALL_LIMIT
+        + [("code", "abandon_feature", {})],
+    )
+    reward = task.finalize_episode(
+        [], task.measure_initial_state([], context), context, artifacts
+    )
+    stage, _, outcome = _commit_and_read_outcome(task, identity, reward)
+
+    assert (stage, outcome["stop_cause"]) == ("compile", "compile_budget")
+    assert outcome["referenced_descriptors"] is None
+    assert outcome["process"] == {
+        "calls": {"abandon_feature": 1, "compile_feature": COMPILE_CALL_LIMIT},
+        "compile_attempts": COMPILE_CALL_LIMIT,
+        "compile_successes": 0,
+        "first_compile_success_attempt": None,
+        "probes": 0,
+        "probe_percentiles": [],
+        "admission_percentile": None,
+    }
+
+
+def test_abandoned_feature_that_is_still_scored_has_no_compile_budget_stop(
+    tmp_path,
+) -> None:
+    task = _scored_task(tmp_path)
+    population = task.populate(
+        [type("Container", (), {"id": "agent"})()], task.list_variations()[0]
+    )
+    context = population.episode_context
+    identity = TrustedEpisodeIdentity("run", 0, 0, "ep-0")
+    failing = [("code", "compile_feature", {"expression": 7})] * (COMPILE_CALL_LIMIT - 1)
+
+    artifacts = _drive_episode(
+        task,
+        context,
+        identity,
+        [
+            ("explore", "record_evidence_plan", _PLAN_INPUT),
+            ("hypothesise", "record_hypothesis", _HYPOTHESIS_INPUT),
+            *failing,
+            ("code", "compile_feature", {"expression": "favorability"}),
+            ("code", "abandon_feature", {}),
+            ("verify", "submit_hypothesis", {}),
+            ("rewrite", "submit_rewrite", {"target": "Rank by favorability."}),
+        ],
+    )
+    reward = task.finalize_episode(
+        [], task.measure_initial_state([], context), context, artifacts
+    )
+    stage, admitted, outcome = _commit_and_read_outcome(task, identity, reward)
+
+    assert (stage, admitted) == (None, True)
+    assert outcome["process"]["compile_attempts"] == COMPILE_CALL_LIMIT
+    assert outcome["process"]["first_compile_success_attempt"] == COMPILE_CALL_LIMIT
+    assert outcome["stop_cause"] is None
+
+
+def test_abandoned_episode_records_the_inputs_of_its_latest_compiled_feature(
+    tmp_path,
+) -> None:
+    task = _scored_task(tmp_path)
+    population = task.populate(
+        [type("Container", (), {"id": "agent"})()], task.list_variations()[0]
+    )
+    context = population.episode_context
+    identity = TrustedEpisodeIdentity("run", 0, 0, "ep-0")
+
+    artifacts = _drive_episode(
+        task,
+        context,
+        identity,
+        [
+            ("explore", "record_evidence_plan", _PLAN_INPUT),
+            ("hypothesise", "record_hypothesis", _HYPOTHESIS_INPUT),
+            (
+                "code",
+                "compile_feature",
+                {"expression": "favorability", "applicable": "coordination > 0"},
+            ),
+            ("code", "abandon_feature", {}),
+        ],
+    )
+    reward = task.finalize_episode(
+        [], task.measure_initial_state([], context), context, artifacts
+    )
+    stage, admitted, outcome = _commit_and_read_outcome(task, identity, reward)
+
+    assert (stage, admitted) == ("compile", False)
+    assert outcome["referenced_descriptors"] == ["coordination", "favorability"]
+
+
+def test_overlapping_compiles_record_the_first_success_by_dispatch_order(
+    tmp_path, monkeypatch
+) -> None:
+    task = _scored_task(tmp_path)
+    context = {
+        "_materials_evidence_plan": _PLAN_INPUT,
+        "_materials_hypothesis": _HYPOTHESIS_INPUT,
+    }
+    identity = TrustedEpisodeIdentity("run", 0, 0, "ep-0")
+    load = task._load_dataset
+    load()
+    first_dispatched = threading.Event()
+    second_returned = threading.Event()
+
+    def load_after_the_second_call_returns():
+        first_dispatched.set()
+        assert second_returned.wait(timeout=10)
+        return load()
+
+    monkeypatch.setattr(task, "_load_dataset", load_after_the_second_call_returns)
+
+    def compile_feature(expression):
+        return task.execute_capability(
+            CapabilityInvocation("compile_feature", {"expression": expression}),
+            [],
+            task.list_variations()[0],
+            CapabilityExecutionContext(
+                identity.episode_id, "code", context, identity=identity
+            ),
+        )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(compile_feature, "favorability")
+        assert first_dispatched.wait(timeout=10)
+        second = compile_feature(7)
+        second_returned.set()
+        first = pending.result(timeout=10)
+    reward = task.finalize_episode(
+        [], task.measure_initial_state([], context), context, EpisodeArtifacts()
+    )
+    _, _, outcome = _commit_and_read_outcome(task, identity, reward)
+
+    assert (first.success, second.success) == (True, False)
+    assert outcome["process"]["calls"] == {"compile_feature": 2}
+    assert outcome["process"]["compile_successes"] == 1
+    assert outcome["process"]["first_compile_success_attempt"] == 1
+
+
+def test_scored_episode_without_a_rewrite_commits_the_rewrite_stage(
+    tmp_path,
+) -> None:
+    task = _scored_task(tmp_path)
+    population = task.populate(
+        [type("Container", (), {"id": "agent"})()], task.list_variations()[0]
+    )
+    context = population.episode_context
+    identity = TrustedEpisodeIdentity("run", 0, 0, "ep-0")
+
+    artifacts = _drive_episode(
+        task,
+        context,
+        identity,
+        [
+            ("explore", "record_evidence_plan", _PLAN_INPUT),
+            ("hypothesise", "record_hypothesis", _HYPOTHESIS_INPUT),
+            ("code", "compile_feature", {"expression": "favorability"}),
+            ("code", "finalize_feature", {}),
+            ("verify", "submit_hypothesis", {}),
+        ],
+    )
+    reward = task.finalize_episode(
+        [], task.measure_initial_state([], context), context, artifacts
+    )
+    stage, admitted, outcome = _commit_and_read_outcome(task, identity, reward)
+
+    assert artifacts.capability_results[-1].output["archive_admission"] is True
+    assert not reward.success
+    assert (stage, admitted) == ("rewrite", False)
+    assert outcome["rejection_stage"] == "rewrite"
+    assert outcome["rewrite"] is None
+
+
+def test_trusted_parent_pair_round_trips_in_assignment_order_without_new_public_keys(
+    tmp_path, monkeypatch
+) -> None:
+    task = _scored_task(tmp_path)
+    store = task._archive_store()
+    seeds = []
+    for index, rule_hash in enumerate(("rule-seed-a", "rule-seed-b")):
+        seed = {
+            "canonical_rule_hash": rule_hash,
+            "behavior_hash": f"behavior-{rule_hash}",
+            "episode_id": f"seed-{index}",
+            "hypothesis": f"seed hypothesis {index}",
+        }
+        prepared = store.prepare_episode_commit(
+            identity=TrustedEpisodeIdentity("seed", 0, index, f"seed-{index}"),
+            training_success=True,
+            requested_admission=True,
+            canonical_rule_hash=rule_hash,
+            behavior_hash=seed["behavior_hash"],
+            consequence_hash=None,
+            receipt_hash=None,
+            outcome={},
+            archive_record=seed,
+        )
+        store.apply_episode_commit(prepared.token, prepared.intent_digest)
+        seeds.append(seed)
+    pairs = []
+    assign_parent_pair = ArchiveStore.assign_parent_pair
+
+    def recording_assign_parent_pair(self):
+        pairs.append(assign_parent_pair(self))
+        return pairs[-1]
+
+    monkeypatch.setattr(
+        ArchiveStore, "assign_parent_pair", recording_assign_parent_pair
+    )
+    container = type("Container", (), {"id": "agent"})()
+    task.populate([container], task.list_variations()[0])
+    population = task.populate([container], task.list_variations()[0])
+    identity = TrustedEpisodeIdentity("run", 1, 0, "ep-1")
+
+    *_, reward = _run_candidate(task, population, identity)
+    _, admitted, outcome = _commit_and_read_outcome(task, identity, reward)
+    with closing(sqlite3.connect(task._archive_path)) as connection:
+        (child_json,) = connection.execute(
+            "SELECT record_json FROM archive_records WHERE revision = 3"
+        ).fetchone()
+    child_record = json.loads(child_json)
+
+    assert admitted
+    assert len(pairs) == 2
+    assert list(pairs[-1]) != [seed["canonical_rule_hash"] for seed in seeds]
+    assert outcome["parent_rule_hashes"] == list(pairs[-1])
+    assert population.episode_context["parent_hypotheses"] == seeds
+    assert "_materials_parent_rule_hashes" not in task._public_context(
+        population.episode_context
+    )
+    assert set(child_record) == {
+        "canonical_rule_hash",
+        "behavior_hash",
+        "episode_id",
+        "hypothesis",
+        "rationale",
+        "applicability",
+        "evidence_aliases",
+        "expression",
+        "uncertainty",
+        "discriminating_test",
+        "parent_hypothesis_ids",
+    }
 
 
 def _run_candidate(task, population, identity):

@@ -104,6 +104,7 @@ _PUBLIC_CONTEXT_KEYS = (
 _INSPECT_MAX_FILTERS = 3
 _INSPECT_MAX_ROWS = 10
 
+COMPILE_CALL_LIMIT = 8
 PROBE_CALL_LIMIT = 3
 PROBE_LEAK_BUDGET_BITS = 16.0
 EVIDENCE_GROUPS_PER_SHARD = 3
@@ -120,6 +121,54 @@ def _ordinal_percentile(value: float) -> str:
         else {1: "st", 2: "nd", 3: "rd"}.get(rounded % 10, "th")
     )
     return f"{rounded}{suffix} percentile"
+
+
+def _optional_count(value: Any) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def _optional_finite(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(value) else None
+
+
+def _optional_strings(value: Any) -> list[str] | None:
+    if not isinstance(value, (list, tuple)):
+        return None
+    return list(value) if all(isinstance(item, str) for item in value) else None
+
+
+def _process_outcome(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    raw_calls = value.get("calls")
+    calls = (
+        {
+            name: count
+            for name, count in sorted(raw_calls.items())
+            if isinstance(name, str) and _optional_count(count) is not None
+        }
+        if isinstance(raw_calls, Mapping)
+        else {}
+    )
+    raw_percentiles = value.get("probe_percentiles")
+    percentiles = (
+        [item for item in map(_optional_finite, raw_percentiles) if item is not None]
+        if isinstance(raw_percentiles, (list, tuple))
+        else []
+    )
+    return {
+        "calls": calls,
+        "compile_attempts": calls.get("compile_feature", 0),
+        "compile_successes": _optional_count(value.get("compile_successes")) or 0,
+        "first_compile_success_attempt": _optional_count(
+            value.get("first_compile_success_attempt")
+        ),
+        "probes": calls.get("probe_feature", 0),
+        "probe_percentiles": percentiles,
+        "admission_percentile": _optional_finite(value.get("admission_percentile")),
+    }
 
 
 @dataclass(frozen=True)
@@ -234,6 +283,7 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
 
         self._scorer_slots = threading.BoundedSemaphore(max_scorers)
         self._dataset_lock = threading.Lock()
+        self._call_register_lock = threading.Lock()
         self._loaded_dataset: LoadedDataset | None = None
         self._minimum_support = int(task_config.get("minimum_support", 2))
 
@@ -314,12 +364,13 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
             if isinstance(rule_hash, str) and rule_hash:
                 store.register_parent(rule_hash, quality=1.0)
         parent_hypotheses: list[dict[str, Any]] = []
+        parent_rule_hashes: list[str] = []
         if len(admitted_records) >= 2:
-            parent_ids = set(store.assign_parent_pair())
+            parent_rule_hashes = list(store.assign_parent_pair())
             parent_hypotheses = [
                 record
                 for record in admitted_records
-                if record.get("canonical_rule_hash") in parent_ids
+                if record.get("canonical_rule_hash") in parent_rule_hashes
             ]
         results = [
             PopulationResult(
@@ -340,6 +391,7 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
                 "evidence": evidence_candidates,
                 "parent_hypotheses": parent_hypotheses,
                 "rule_contract": rule_contract,
+                "_materials_parent_rule_hashes": parent_rule_hashes,
             },
             private_context={"dataset_path": str(self._dataset_path)},
         )
@@ -900,7 +952,7 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
                 max_task_tool_calls_by_name={
                     "record_evidence_plan": 1,
                     "record_hypothesis": 1,
-                    "compile_feature": 8,
+                    "compile_feature": COMPILE_CALL_LIMIT,
                     "probe_feature": PROBE_CALL_LIMIT,
                     "run_python": 10,
                     "finalize_feature": 1,
@@ -949,6 +1001,12 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
         ctx: CapabilityExecutionContext,
     ) -> CapabilityResult:
         del variation
+        with self._call_register_lock:
+            calls = ctx.episode_context.setdefault("_materials_calls", {})
+            if not isinstance(calls, dict):
+                raise TaskEnvironmentError("capability call register is invalid")
+            calls[invocation.name] = calls.get(invocation.name, 0) + 1
+            attempt = calls[invocation.name]
         expected_steps = _CAPABILITY_STEPS.get(invocation.name)
         if expected_steps is None:
             return CapabilityResult(
@@ -990,7 +1048,7 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
         elif invocation.name == "record_hypothesis":
             ctx.episode_context["_materials_hypothesis"] = dict(invocation.input)
         elif invocation.name == "compile_feature":
-            return self._compile_feature(invocation, ctx)
+            return self._compile_feature(invocation, ctx, attempt=attempt)
         elif invocation.name == "probe_feature":
             return self._probe_feature(invocation, ctx)
         elif invocation.name == "finalize_feature":
@@ -1066,6 +1124,7 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
                     success=False,
                     error="submit_rewrite requires a non-empty target",
                 )
+            ctx.episode_context["_materials_rewrite"] = target
         return CapabilityResult(
             name=invocation.name,
             output={"accepted": True},
@@ -1236,6 +1295,8 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
         self,
         invocation: CapabilityInvocation,
         ctx: CapabilityExecutionContext,
+        *,
+        attempt: int,
     ) -> CapabilityResult:
         source = invocation.input.get("expression")
         applicable = invocation.input.get("applicable", "True")
@@ -1273,9 +1334,18 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
             "source": source,
             "applicable": applicable,
             "uncertainty": uncertainty,
+            "referenced_descriptors": sorted(compiled.referenced_descriptors),
             "artifact": artifact,
         }
         ctx.episode_context["_materials_latest_compiled_rule_hash"] = artifact.rule_hash
+        with self._call_register_lock:
+            context = ctx.episode_context
+            context["_materials_compile_successes"] = (
+                context.get("_materials_compile_successes", 0) + 1
+            )
+            first = context.get("_materials_first_compile_success_attempt")
+            if first is None or attempt < first:
+                context["_materials_first_compile_success_attempt"] = attempt
         support_count, variance_ok = self._guard_diagnostics(artifact)
         return CapabilityResult(
             name=invocation.name,
@@ -1467,6 +1537,9 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
             evidence_plan=evidence_plan,
             compiled_state=compiled_state,
         )
+        referenced_descriptors = list(
+            compiled_state.get("referenced_descriptors") or []
+        )
         support_count, variance_ok = self._guard_diagnostics(artifact)
         support_ok = support_count >= self._minimum_support
         if not support_ok or not variance_ok:
@@ -1480,6 +1553,7 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
                 "consequence_hash": None,
                 "receipt_hash": None,
                 "hypothesis_record": public_record,
+                "referenced_descriptors": referenced_descriptors,
             }
             return CapabilityResult(
                 name=invocation.name,
@@ -1542,6 +1616,7 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
             "receipt_hash": receipt_hash,
             "score_start_revision": score_start_revision,
             "hypothesis_record": public_record,
+            "referenced_descriptors": referenced_descriptors,
         }
         return CapabilityResult(
             name=invocation.name,
@@ -1588,6 +1663,13 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
                     "universe_percentile": percentile,
                 },
             )
+            retained = _optional_finite(percentile)
+            if retained is not None and scope == "probe":
+                ctx.episode_context.setdefault(
+                    "_materials_probe_percentiles", []
+                ).append(retained)
+            elif retained is not None:
+                ctx.episode_context["_materials_admission_percentile"] = retained
         except Exception as exc:  # noqa: BLE001 - telemetry cannot alter task results
             try:
                 recorder.log_warning(
@@ -1700,17 +1782,43 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
         private_context: dict[str, Any] | None = None,
         finalization_context: Any = None,
     ) -> TaskReward:
-        del containers, initial, private_context, finalization_context
+        del containers, initial, private_context
+        observed = {
+            "parent_rule_hashes": episode_context.get("_materials_parent_rule_hashes"),
+            "process": _process_outcome(
+                {
+                    "calls": episode_context.get("_materials_calls"),
+                    "compile_successes": episode_context.get(
+                        "_materials_compile_successes", 0
+                    ),
+                    "first_compile_success_attempt": episode_context.get(
+                        "_materials_first_compile_success_attempt"
+                    ),
+                    "probe_percentiles": episode_context.get(
+                        "_materials_probe_percentiles"
+                    ),
+                    "admission_percentile": episode_context.get(
+                        "_materials_admission_percentile"
+                    ),
+                }
+            ),
+            "stop_cause": self._stop_cause(episode_context, finalization_context),
+            "rewrite": episode_context.get("_materials_rewrite"),
+        }
         verification = episode_context.get("_materials_verification")
         if not isinstance(verification, dict):
             return TaskReward(
                 value=0.0,
                 success=False,
                 breakdown={
+                    **observed,
                     "training_success": False,
                     "archive_admission": False,
                     "admitted": False,
-                    "rejection_stage": "incomplete",
+                    "rejection_stage": self._unverified_stage(episode_context),
+                    "referenced_descriptors": self._selected_descriptors(
+                        episode_context
+                    ),
                 },
             )
         rewritten = any(
@@ -1719,16 +1827,61 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
         )
         training_success = bool(verification["training_success"] and rewritten)
         archive_admission = bool(training_success and verification["archive_admission"])
+        rejection_stage = verification.get("rejection_stage")
+        if rejection_stage is None and not rewritten:
+            rejection_stage = "rewrite"
         return TaskReward(
             value=float(training_success),
             success=training_success,
             breakdown={
                 **verification,
+                **observed,
                 "training_success": training_success,
                 "archive_admission": archive_admission,
                 "admitted": archive_admission,
+                "rejection_stage": rejection_stage,
             },
         )
+
+    @staticmethod
+    def _unverified_stage(episode_context: Mapping[str, Any]) -> str:
+        if not isinstance(episode_context.get("_materials_evidence_plan"), dict):
+            return "explore"
+        if not isinstance(episode_context.get("_materials_hypothesis"), dict):
+            return "hypothesise"
+        if not isinstance(episode_context.get("_materials_finalized_rule_hash"), str):
+            return "compile"
+        return "submit"
+
+    @staticmethod
+    def _selected_descriptors(episode_context: Mapping[str, Any]) -> list[str] | None:
+        compiled_states = episode_context.get("_materials_compiled")
+        rule_hash = episode_context.get("_materials_finalized_rule_hash")
+        if not isinstance(rule_hash, str):
+            rule_hash = episode_context.get("_materials_latest_compiled_rule_hash")
+        if not isinstance(compiled_states, dict) or not isinstance(rule_hash, str):
+            return None
+        compiled_state = compiled_states.get(rule_hash)
+        if not isinstance(compiled_state, dict):
+            return None
+        return _optional_strings(compiled_state.get("referenced_descriptors"))
+
+    @staticmethod
+    def _stop_cause(
+        episode_context: Mapping[str, Any], finalization_context: Any
+    ) -> str | None:
+        if getattr(finalization_context, "budget_exhaustion", None) is not None:
+            return "tool_budget"
+        calls = episode_context.get("_materials_calls")
+        compiles = calls.get("compile_feature", 0) if isinstance(calls, dict) else 0
+        finalized = episode_context.get("_materials_finalized_rule_hash")
+        if (
+            compiles >= COMPILE_CALL_LIMIT
+            and not isinstance(finalized, str)
+            and not isinstance(episode_context.get("_materials_verification"), dict)
+        ):
+            return "compile_budget"
+        return None
 
     def training_data_transforms(self) -> tuple[MaterialsRewriteTransform, ...]:
         return (MaterialsRewriteTransform(),)
@@ -1771,6 +1924,12 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
         consequence_hash = breakdown.get("consequence_hash")
         behavior_hash = breakdown.get("behavior_hash")
         receipt_hash = breakdown.get("receipt_hash")
+        rejection_stage = breakdown.get("rejection_stage", "error")
+        if rejection_stage is not None and not isinstance(rejection_stage, str):
+            rejection_stage = "error"
+        descriptors = _optional_strings(breakdown.get("referenced_descriptors"))
+        stop_cause = breakdown.get("stop_cause")
+        rewrite = breakdown.get("rewrite")
         return self._archive_store().prepare_episode_commit(
             identity=identity,
             training_success=training_success,
@@ -1782,8 +1941,17 @@ class MaterialsAdsorptionTask(TaskSpec[MaterialsAdsorptionState]):
             ),
             receipt_hash=receipt_hash if isinstance(receipt_hash, str) else None,
             outcome={
-                "rejection_stage": breakdown.get("rejection_stage"),
+                "rejection_stage": rejection_stage,
                 "materialized": materialized,
+                "parent_rule_hashes": _optional_strings(
+                    breakdown.get("parent_rule_hashes")
+                ),
+                "referenced_descriptors": (
+                    None if descriptors is None else sorted(descriptors)
+                ),
+                "process": _process_outcome(breakdown.get("process")),
+                "stop_cause": stop_cause if isinstance(stop_cause, str) else None,
+                "rewrite": rewrite if isinstance(rewrite, str) else None,
             },
             archive_record={
                 "canonical_rule_hash": rule_hash,

@@ -1,0 +1,3874 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'"
+    />
+    <title>Run visualisation</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --surface: #fcfcfb;
+        --text: #0b0b0b;
+        --text-2: #52514e;
+        --muted: #898781;
+        --grid: #e1e0d9;
+        --axis: #c3c2b7;
+        --ring: rgba(11, 11, 11, 0.1);
+        --hover: rgba(11, 11, 11, 0.045);
+        --band: rgba(11, 11, 11, 0.035);
+        --shadow: 0 12px 32px rgba(11, 11, 11, 0.14);
+        --good: #0ca30c;
+        --good-text: #006300;
+        --warning: #fab219;
+        --passed: #c3c2b7;
+        --track: #f0efec;
+        --offsieve: #898781;
+        --edge: #898781;
+        --series: #2a78d6;
+        --cat-1: #2a78d6;
+        --cat-2: #eb6834;
+        --cat-3: #1baf7a;
+        --cat-4: #eda100;
+        --cat-5: #e87ba4;
+        --cat-6: #008300;
+        --cat-7: #6250d6;
+        --cat-8: #e34948;
+        --cat-other: #898781;
+        --cat-ink-1: #ffffff;
+        --cat-ink-2: #ffffff;
+        --cat-ink-3: #ffffff;
+        --cat-ink-4: #0b0b0b;
+        --cat-ink-5: #ffffff;
+        --cat-ink-6: #ffffff;
+        --cat-ink-7: #ffffff;
+        --cat-ink-8: #ffffff;
+        --cat-ink-other: #ffffff;
+        --seq-1: #cde2fb;
+        --seq-2: #9ec5f4;
+        --seq-3: #6da7ec;
+        --seq-4: #3987e5;
+        --seq-5: #256abf;
+        --seq-6: #184f95;
+        --seq-7: #0d366b;
+        --seq-ink-1: #0b0b0b;
+        --seq-ink-2: #0b0b0b;
+        --seq-ink-3: #0b0b0b;
+        --seq-ink-4: #ffffff;
+        --seq-ink-5: #ffffff;
+        --seq-ink-6: #ffffff;
+        --seq-ink-7: #ffffff;
+        --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          color-scheme: dark;
+          --surface: #1a1a19;
+          --text: #f0efec;
+          --text-2: #c3c2b7;
+          --muted: #898781;
+          --grid: #2c2c2a;
+          --axis: #383835;
+          --ring: rgba(255, 255, 255, 0.1);
+          --hover: rgba(255, 255, 255, 0.06);
+          --band: rgba(255, 255, 255, 0.04);
+          --shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+          --good-text: #0ca30c;
+          --passed: #52514e;
+          --track: #2c2c2a;
+          --series: #3987e5;
+          --cat-1: #3987e5;
+          --cat-2: #d95926;
+          --cat-3: #199e70;
+          --cat-4: #c98500;
+          --cat-5: #d55181;
+          --cat-6: #008300;
+          --cat-7: #9085e9;
+          --cat-8: #e66767;
+          --cat-ink-4: #ffffff;
+          --seq-1: #0d366b;
+          --seq-2: #184f95;
+          --seq-3: #256abf;
+          --seq-4: #3987e5;
+          --seq-5: #6da7ec;
+          --seq-6: #9ec5f4;
+          --seq-7: #cde2fb;
+          --seq-ink-1: #ffffff;
+          --seq-ink-2: #ffffff;
+          --seq-ink-3: #ffffff;
+          --seq-ink-4: #ffffff;
+          --seq-ink-5: #0b0b0b;
+          --seq-ink-6: #0b0b0b;
+          --seq-ink-7: #0b0b0b;
+        }
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --surface: #1a1a19;
+        --text: #f0efec;
+        --text-2: #c3c2b7;
+        --muted: #898781;
+        --grid: #2c2c2a;
+        --axis: #383835;
+        --ring: rgba(255, 255, 255, 0.1);
+        --hover: rgba(255, 255, 255, 0.06);
+        --band: rgba(255, 255, 255, 0.04);
+        --shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+        --good-text: #0ca30c;
+        --passed: #52514e;
+        --track: #2c2c2a;
+        --series: #3987e5;
+        --cat-1: #3987e5;
+        --cat-2: #d95926;
+        --cat-3: #199e70;
+        --cat-4: #c98500;
+        --cat-5: #d55181;
+        --cat-6: #008300;
+        --cat-7: #9085e9;
+        --cat-8: #e66767;
+        --cat-ink-4: #ffffff;
+        --seq-1: #0d366b;
+        --seq-2: #184f95;
+        --seq-3: #256abf;
+        --seq-4: #3987e5;
+        --seq-5: #6da7ec;
+        --seq-6: #9ec5f4;
+        --seq-7: #cde2fb;
+        --seq-ink-1: #ffffff;
+        --seq-ink-2: #ffffff;
+        --seq-ink-3: #ffffff;
+        --seq-ink-4: #ffffff;
+        --seq-ink-5: #0b0b0b;
+        --seq-ink-6: #0b0b0b;
+        --seq-ink-7: #0b0b0b;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        background: var(--surface);
+        color: var(--text);
+        font: 14px/1.45 var(--sans);
+        overflow-x: hidden;
+      }
+      button {
+        font: inherit;
+        color: inherit;
+      }
+      :focus-visible {
+        outline: 2px solid var(--series);
+        outline-offset: 2px;
+      }
+      .page {
+        max-width: 1680px;
+        margin: 0 auto;
+        padding: 20px 24px 48px;
+        transition: padding-right 0.2s ease;
+      }
+      .top {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px 24px;
+        align-items: flex-start;
+        justify-content: space-between;
+      }
+      .top h1 {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 600;
+        line-height: 1.3;
+        overflow-wrap: anywhere;
+      }
+      .meta {
+        margin: 4px 0 0;
+        color: var(--text-2);
+        font-size: 13px;
+      }
+      .meta span + span::before {
+        content: "\00b7";
+        margin: 0 8px;
+        color: var(--muted);
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .btn {
+        border: 1px solid var(--ring);
+        background: var(--surface);
+        border-radius: 8px;
+        padding: 6px 12px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 32px;
+      }
+      .btn:hover {
+        background: var(--hover);
+      }
+      .btn[aria-pressed="true"] {
+        border-color: var(--text-2);
+      }
+      .btn .count {
+        color: var(--text-2);
+        font-variant-numeric: tabular-nums;
+      }
+      .notice {
+        margin: 12px 0 0;
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 13px;
+        border: 1px solid var(--ring);
+        color: var(--text-2);
+        display: flex;
+        gap: 8px;
+      }
+      .notice .icon {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .notice strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .chips {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 16px 0 0;
+        flex-wrap: wrap;
+      }
+      .chips .label {
+        color: var(--text-2);
+        font-size: 13px;
+        margin-right: 4px;
+      }
+      .chip-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1 1 240px;
+        min-width: 0;
+        overflow-x: auto;
+        padding: 2px;
+        scrollbar-width: thin;
+      }
+      .chip {
+        border: 1px solid var(--ring);
+        background: var(--surface);
+        border-radius: 999px;
+        padding: 4px 12px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        min-height: 30px;
+        flex: none;
+        white-space: nowrap;
+      }
+      .chip:hover {
+        background: var(--hover);
+      }
+      .chip[aria-pressed="true"] {
+        border-color: var(--text);
+        box-shadow: inset 0 0 0 1px var(--text);
+      }
+      .chip .n {
+        color: var(--text-2);
+        font-variant-numeric: tabular-nums;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        display: inline-block;
+        flex: none;
+      }
+      .filter-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 4px 4px 12px;
+        border-radius: 999px;
+        background: var(--hover);
+        font-size: 13px;
+        max-width: 100%;
+      }
+      .filter-pill .v {
+        font-family: var(--mono);
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+      .filter-pill button {
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+        border-radius: 50%;
+        width: 24px;
+        height: 24px;
+        line-height: 1;
+        color: var(--text-2);
+      }
+      .filter-pill button:hover {
+        background: var(--hover);
+        color: var(--text);
+      }
+      main {
+        margin-top: 16px;
+        display: grid;
+        gap: 16px;
+      }
+      .row {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: minmax(0, 1fr);
+      }
+      @media (min-width: 900px) {
+        .row-a {
+          grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+        }
+        .row-b {
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
+      }
+      @media (min-width: 1180px) {
+        body.drawer-open .page {
+          padding-right: 464px;
+        }
+      }
+      .panel {
+        border: 1px solid var(--ring);
+        border-radius: 12px;
+        padding: 16px;
+        min-width: 0;
+        background: var(--surface);
+      }
+      .panel-head {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        justify-content: space-between;
+      }
+      .panel-head h2 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      .panel-head p {
+        margin: 2px 0 0;
+        color: var(--text-2);
+        font-size: 13px;
+        max-width: 72ch;
+      }
+      .panel-head .btn {
+        flex: none;
+        padding: 4px 10px;
+        min-height: 28px;
+        font-size: 13px;
+      }
+      .panel-body {
+        margin-top: 12px;
+      }
+      .scroller {
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+      }
+      .scroller svg {
+        display: block;
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 16px;
+        margin-top: 12px;
+        font-size: 12px;
+        color: var(--text-2);
+        align-items: center;
+      }
+      .legend .item {
+        display: inline-flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 6px;
+      }
+      .legend .title {
+        color: var(--text);
+        font-weight: 500;
+        white-space: nowrap;
+      }
+      .legend svg {
+        display: block;
+        flex: none;
+      }
+      .swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        display: inline-block;
+        flex: none;
+      }
+      .ramp {
+        display: inline-flex;
+        gap: 2px;
+      }
+      .ramp .swatch {
+        width: 14px;
+        border-radius: 2px;
+      }
+      .note {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--text-2);
+      }
+      .empty {
+        border: 1px dashed var(--axis);
+        border-radius: 10px;
+        padding: 28px 16px;
+        text-align: center;
+        color: var(--text-2);
+      }
+      .empty strong {
+        display: block;
+        color: var(--text);
+        font-weight: 600;
+        margin-bottom: 4px;
+      }
+      svg text {
+        font-family: var(--sans);
+        font-size: 11px;
+        fill: var(--text-2);
+      }
+      svg text.muted {
+        fill: var(--muted);
+      }
+      svg text.strong {
+        fill: var(--text);
+        font-weight: 600;
+      }
+      svg text.num {
+        font-variant-numeric: tabular-nums;
+      }
+      svg text.halo {
+        paint-order: stroke;
+        stroke: var(--surface);
+        stroke-width: 4px;
+        stroke-linejoin: round;
+      }
+      svg .hit {
+        fill: transparent;
+        cursor: pointer;
+      }
+      svg .hit:hover,
+      svg .hit:focus-visible {
+        fill: var(--hover);
+      }
+      svg .hit:focus-visible {
+        outline: none;
+        stroke: var(--series);
+        stroke-width: 2;
+      }
+      svg .node-g {
+        cursor: pointer;
+      }
+      svg .node-g:focus-visible {
+        outline: none;
+      }
+      svg .node-g:focus-visible .node-hit {
+        stroke: var(--series);
+        stroke-width: 2;
+      }
+      svg .node-hit {
+        fill: transparent;
+      }
+      svg .node-g:hover .node-hit {
+        fill: var(--hover);
+      }
+      svg .gridline {
+        stroke: var(--grid);
+        stroke-width: 1;
+      }
+      svg .baseline {
+        stroke: var(--axis);
+        stroke-width: 1;
+      }
+      svg .dim {
+        opacity: 0.16;
+      }
+      svg .dim .hit,
+      svg .dim.hit {
+        pointer-events: none;
+      }
+      .cov {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px 20px;
+      }
+      .cov-group {
+        min-width: 0;
+        flex: 0 1 auto;
+        max-width: 100%;
+      }
+      .cov-group-label {
+        font-size: 12px;
+        color: var(--text-2);
+        margin-bottom: 6px;
+      }
+      .cov-group-label b {
+        color: var(--text);
+        font-weight: 600;
+      }
+      .cov-cells {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .cov-cell {
+        width: 132px;
+        min-height: 64px;
+        padding: 6px 8px;
+        text-align: left;
+        cursor: pointer;
+        border-radius: 6px;
+        border: 1px solid var(--grid);
+        background: var(--surface);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 4px;
+      }
+      .cov-cell:hover {
+        box-shadow: inset 0 0 0 1px var(--text-2);
+      }
+      .cov-cell .nm {
+        font-size: 12px;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+      }
+      .cov-cell .ct {
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        opacity: 0.85;
+      }
+      .cov-cell.untouched {
+        color: var(--muted);
+      }
+      .cov-cell.rejected-only {
+        border: 1.5px dashed var(--muted);
+        color: var(--text-2);
+      }
+      .cov-cell[data-bin="1"] {
+        background: var(--seq-1);
+        color: var(--seq-ink-1);
+        border-color: transparent;
+      }
+      .cov-cell[data-bin="2"] {
+        background: var(--seq-2);
+        color: var(--seq-ink-2);
+        border-color: transparent;
+      }
+      .cov-cell[data-bin="3"] {
+        background: var(--seq-3);
+        color: var(--seq-ink-3);
+        border-color: transparent;
+      }
+      .cov-cell[data-bin="4"] {
+        background: var(--seq-4);
+        color: var(--seq-ink-4);
+        border-color: transparent;
+      }
+      .cov-cell[data-bin="5"] {
+        background: var(--seq-5);
+        color: var(--seq-ink-5);
+        border-color: transparent;
+      }
+      .cov-cell[data-bin="6"] {
+        background: var(--seq-6);
+        color: var(--seq-ink-6);
+        border-color: transparent;
+      }
+      .cov-cell[data-bin="7"] {
+        background: var(--seq-7);
+        color: var(--seq-ink-7);
+        border-color: transparent;
+      }
+      .cov-cell[aria-pressed="true"] {
+        outline: 2px solid var(--text);
+        outline-offset: 2px;
+      }
+      .cov-cell.faded {
+        opacity: 0.5;
+      }
+      .sieve {
+        display: grid;
+        grid-template-columns: auto minmax(0, max-content) auto;
+        justify-content: start;
+        align-items: start;
+      }
+      .sieve-gen + .sieve-gen {
+        margin-top: 16px;
+      }
+      .sieve-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 8px;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .sieve-head b {
+        color: var(--text);
+        font-size: 13px;
+      }
+      .pf {
+        display: flex;
+        gap: 10px;
+      }
+      .pf-panel {
+        flex: none;
+        width: 204px;
+        border: 1px solid var(--ring);
+        border-radius: 10px;
+        padding: 10px;
+      }
+      .pf-panel h3 {
+        margin: 0;
+        font-size: 13px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .pf-panel .sub {
+        font-size: 12px;
+        color: var(--text-2);
+      }
+      .pf-panel .sec {
+        font-size: 12px;
+        color: var(--text);
+        margin: 10px 0 4px;
+      }
+      .pf-panel .foot {
+        font-size: 12px;
+        color: var(--text-2);
+        margin-top: 8px;
+      }
+      .table-wrap {
+        overflow-x: auto;
+      }
+      table {
+        border-collapse: collapse;
+        font-size: 12px;
+        width: 100%;
+      }
+      caption {
+        text-align: left;
+        color: var(--text-2);
+        padding-bottom: 6px;
+      }
+      th,
+      td {
+        padding: 4px 8px;
+        border-bottom: 1px solid var(--grid);
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        font-weight: 600;
+        color: var(--text);
+        white-space: nowrap;
+      }
+      td.n,
+      th.n {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }
+      td.mono {
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      td.wide {
+        min-width: 16em;
+      }
+      .tip {
+        position: fixed;
+        z-index: 50;
+        pointer-events: none;
+        max-width: 320px;
+        background: var(--surface);
+        border: 1px solid var(--ring);
+        border-radius: 8px;
+        box-shadow: var(--shadow);
+        padding: 8px 10px;
+        font-size: 12px;
+        color: var(--text-2);
+      }
+      .tip-title {
+        color: var(--text);
+        font-weight: 600;
+        margin-bottom: 4px;
+        overflow-wrap: anywhere;
+      }
+      .tip-row {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+      }
+      .tip-row strong {
+        color: var(--text);
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+      }
+      .drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: min(440px, 100vw);
+        z-index: 40;
+        background: var(--surface);
+        border-left: 1px solid var(--ring);
+        box-shadow: var(--shadow);
+        transform: translateX(105%);
+        transition: transform 0.2s ease;
+        display: flex;
+        flex-direction: column;
+        visibility: hidden;
+      }
+      body.drawer-open .drawer {
+        transform: none;
+        visibility: visible;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .drawer,
+        .page {
+          transition: none;
+        }
+      }
+      .drawer-head {
+        padding: 16px 16px 8px;
+        border-bottom: 1px solid var(--grid);
+      }
+      .drawer-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .drawer-title h2 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .drawer-tools {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+        align-items: center;
+        font-size: 13px;
+      }
+      .drawer-tools label {
+        display: inline-flex;
+        gap: 6px;
+        align-items: center;
+        cursor: pointer;
+        color: var(--text-2);
+      }
+      .drawer-list {
+        overflow-y: auto;
+        padding: 12px 16px 32px;
+        flex: 1 1 auto;
+        display: grid;
+        gap: 12px;
+        align-content: start;
+      }
+      .card {
+        border: 1px solid var(--ring);
+        border-radius: 10px;
+        padding: 12px;
+        min-width: 0;
+      }
+      .card.focus {
+        box-shadow: inset 0 0 0 2px var(--series);
+      }
+      .card-head {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 10px;
+        align-items: center;
+        font-size: 12px;
+        color: var(--text-2);
+      }
+      .card-head .mono {
+        font-family: var(--mono);
+        font-size: 11px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text);
+        padding: 1px 8px 1px 6px;
+        border-radius: 999px;
+        border: 1px solid var(--ring);
+      }
+      .badge .ico {
+        width: 12px;
+        height: 12px;
+        flex: none;
+      }
+      .badge.good {
+        color: var(--good-text);
+      }
+      .hyp {
+        margin: 8px 0 0;
+        font-size: 14px;
+        color: var(--text);
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+      .rewrite {
+        margin: 8px 0 0;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: var(--hover);
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+      .rewrite .k,
+      .field .k {
+        display: block;
+        font-size: 11px;
+        color: var(--text-2);
+        margin-bottom: 2px;
+        white-space: normal;
+      }
+      .expr {
+        margin: 8px 0 0;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--grid);
+        font: 12px/1.45 var(--mono);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .inchips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 8px;
+      }
+      .inchip {
+        border: 1px solid var(--ring);
+        border-radius: 999px;
+        padding: 2px 8px;
+        font: 11px var(--mono);
+        background: var(--surface);
+        cursor: pointer;
+        overflow-wrap: anywhere;
+        text-align: left;
+      }
+      .inchip:hover {
+        background: var(--hover);
+      }
+      .inchip[aria-pressed="true"] {
+        border-color: var(--text);
+      }
+      .metrics {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--text-2);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+      }
+      .metrics b {
+        color: var(--text);
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .parents {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--text-2);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 6px;
+        align-items: center;
+      }
+      .idlink {
+        border: 0;
+        background: transparent;
+        padding: 0 2px;
+        cursor: pointer;
+        font: 11px var(--mono);
+        color: var(--text);
+        text-decoration: underline;
+        text-decoration-color: var(--axis);
+        text-underline-offset: 2px;
+      }
+      .idlink:hover {
+        text-decoration-color: var(--text);
+      }
+      .idtext {
+        font: 11px var(--mono);
+      }
+      details {
+        margin-top: 8px;
+        font-size: 12px;
+      }
+      summary {
+        cursor: pointer;
+        color: var(--text-2);
+      }
+      .field {
+        margin-top: 6px;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+      .loading {
+        padding: 48px 24px;
+        color: var(--text-2);
+      }
+      @media (max-width: 600px) {
+        .page {
+          padding: 16px 16px 40px;
+        }
+        .panel {
+          padding: 12px;
+        }
+        .top h1 {
+          font-size: 18px;
+        }
+        .cov-cell {
+          width: calc(50% - 2px);
+        }
+        .cov-group {
+          flex-basis: 100%;
+        }
+      }
+      @media (forced-colors: active) {
+        .cov-cell[data-bin] {
+          border: 1px solid CanvasText;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true" focusable="false">
+      <defs>
+        <pattern
+          id="hatch"
+          patternUnits="userSpaceOnUse"
+          width="4"
+          height="4"
+          patternTransform="rotate(45)"
+        >
+          <rect width="4" height="4" style="fill: var(--track)"></rect>
+          <line
+            x1="0"
+            y1="0"
+            x2="0"
+            y2="4"
+            style="stroke: var(--offsieve); stroke-width: 1.5"
+          ></line>
+        </pattern>
+      </defs>
+    </svg>
+    <div class="page" id="app">
+      <p class="loading" id="loading">Loading run data&hellip;</p>
+    </div>
+    <aside class="drawer" id="drawer" aria-label="Lab notebook" aria-hidden="true"></aside>
+    <div class="tip" id="tip" role="tooltip" hidden></div>
+    <!-- prettier-ignore -->
+    <script id="viz-data" type="application/json">__VIZ_DATA__</script>
+    <script>
+      (() => {
+        "use strict";
+
+        const PLACEHOLDER = "__VIZ" + "_DATA__";
+        const SVG_NS = "http://www.w3.org/2000/svg";
+        const THEME_KEY = "nsl-viz-theme";
+        const CAPABILITIES = [
+          "inspect_evidence",
+          "run_python",
+          "record_evidence_plan",
+          "record_hypothesis",
+          "compile_feature",
+          "probe_feature",
+          "finalize_feature",
+          "abandon_feature",
+          "submit_hypothesis",
+          "get_accepted_hypothesis",
+          "submit_rewrite",
+        ];
+        const CAT_SLOTS = 8;
+        const GEN_LIGHT = [
+          "#86b6ef",
+          "#6da7ec",
+          "#5598e7",
+          "#3987e5",
+          "#2a78d6",
+          "#256abf",
+          "#1c5cab",
+          "#184f95",
+          "#104281",
+          "#0d366b",
+        ];
+        const GEN_DARK = [
+          "#184f95",
+          "#1c5cab",
+          "#256abf",
+          "#2a78d6",
+          "#3987e5",
+          "#5598e7",
+          "#6da7ec",
+          "#86b6ef",
+          "#9ec5f4",
+          "#b7d3f6",
+          "#cde2fb",
+        ];
+        const STAGE_LIGHT = [
+          "#fe9670",
+          "#f37a4d",
+          "#dd6639",
+          "#c65222",
+          "#b13e02",
+          "#943302",
+          "#782802",
+          "#5d1d01",
+          "#441200",
+        ];
+        const STAGE_DARK = [
+          "#8b2f01",
+          "#a73a01",
+          "#bf4b1a",
+          "#d56031",
+          "#eb7446",
+          "#fe8b60",
+          "#ffac8e",
+          "#fecbb8",
+          "#fee7df",
+        ];
+        const OFF_SIEVE_GLYPH = new Map([
+          ["crash", "\u2715"],
+          ["error", "!"],
+          ["incomplete", "?"],
+          ["pending", "\u2026"],
+        ]);
+        const offSieveGlyph = (id) => OFF_SIEVE_GLYPH.get(id) || "\u00b7";
+        const NOTEBOOK_PAGE = 100;
+        const SEQ_BINS = 7;
+
+        const arr = (v) => (Array.isArray(v) ? v : []);
+        const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+        const str = (v) => (v === null || v === undefined ? "" : String(v));
+        const shortId = (id) => str(id).slice(0, 8);
+        const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
+
+        function applyProps(node, props) {
+          if (!props) return;
+          for (const [key, value] of Object.entries(props)) {
+            if (value === null || value === undefined || value === false) continue;
+            if (key === "text") node.textContent = String(value);
+            else if (key === "on") {
+              for (const [type, fn] of Object.entries(value)) node.addEventListener(type, fn);
+            } else if (/^on/i.test(key)) {
+              throw new Error("event attributes are not allowed");
+            } else node.setAttribute(key, value === true ? "" : String(value));
+          }
+        }
+        function appendKids(node, kids) {
+          for (const kid of kids.flat(Infinity)) {
+            if (kid === null || kid === undefined || kid === false) continue;
+            node.appendChild(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+          }
+          return node;
+        }
+        const el = (tag, props, ...kids) => {
+          const node = document.createElement(tag);
+          applyProps(node, props);
+          return appendKids(node, kids);
+        };
+        const fill = (node, ...kids) => {
+          node.replaceChildren();
+          return appendKids(node, kids);
+        };
+        const sv = (tag, props, ...kids) => {
+          const node = document.createElementNS(SVG_NS, tag);
+          applyProps(node, props);
+          return appendKids(node, kids);
+        };
+
+        function fmt(v, sig = 3) {
+          const x = num(v);
+          if (x === null) return "\u2013";
+          if (x === 0) return "0";
+          const a = Math.abs(x);
+          let out;
+          if (a >= 1000) out = Math.round(a).toLocaleString("en-US");
+          else if (a >= 1) out = String(Number(a.toFixed(2)));
+          else if (a < 1e-4) out = a.toExponential(1);
+          else out = String(Number(a.toPrecision(sig)));
+          return (x < 0 ? "\u2212" : "") + out;
+        }
+        const pct = (v) => `${Math.round(v * 100)}%`;
+        function fmtTime(seconds) {
+          const x = num(seconds);
+          if (x === null) return "\u2013";
+          return new Date(x * 1000).toISOString().slice(0, 16).replace("T", " ") + " UTC";
+        }
+        function fmtIso(iso) {
+          const d = new Date(str(iso));
+          if (Number.isNaN(d.getTime())) return str(iso);
+          return d.toISOString().slice(0, 16).replace("T", " ") + " UTC";
+        }
+        const breakable = (name) => str(name).replace(/_/g, "_\u200b");
+
+        function mixHex(a, b, t) {
+          const pa = [1, 3, 5].map((i) => parseInt(a.slice(i, i + 2), 16));
+          const pb = [1, 3, 5].map((i) => parseInt(b.slice(i, i + 2), 16));
+          return (
+            "#" +
+            pa
+              .map((v, i) =>
+                Math.round(v + (pb[i] - v) * t)
+                  .toString(16)
+                  .padStart(2, "0"),
+              )
+              .join("")
+          );
+        }
+        function rampStep(ramp, i, n, single) {
+          if (n <= 1) return ramp[single];
+          const t = (i * (ramp.length - 1)) / (n - 1);
+          if (n <= ramp.length) return ramp[Math.round(t)];
+          const lo = Math.floor(t);
+          const hi = Math.min(ramp.length - 1, lo + 1);
+          return mixHex(ramp[lo], ramp[hi], t - lo);
+        }
+
+        async function loadDocument() {
+          const node = document.getElementById("viz-data");
+          const raw = node ? node.textContent.trim() : "";
+          if (raw && raw !== PLACEHOLDER) return JSON.parse(raw);
+          const response = await fetch("viz.json", { cache: "no-store" });
+          if (!response.ok) throw new Error(`viz.json: HTTP ${response.status}`);
+          return response.json();
+        }
+
+        function buildModel(doc) {
+          const stages = arr(doc.stages).map((s) => ({
+            id: str(s && s.id),
+            label: str(s && (s.label ?? s.id)),
+            sieve: Boolean(s && s.sieve),
+          }));
+          const stageById = new Map(stages.map((s) => [s.id, s]));
+          if (!stageById.has("admitted")) {
+            const s = { id: "admitted", label: "Admitted", sieve: true };
+            stages.push(s);
+            stageById.set(s.id, s);
+          }
+          const episodes = arr(doc.episodes)
+            .filter((e) => e && typeof e === "object")
+            .map((e) => ({
+              ...e,
+              key: str(e.key),
+              generation: num(e.generation) ?? 0,
+              episode_index: num(e.episode_index) ?? 0,
+              stage: str(e.stage) || "error",
+              admitted: e.admitted === true,
+              inputs: Array.isArray(e.inputs) ? e.inputs.map(str) : null,
+              parents: Array.isArray(e.parents) ? e.parents.map(str) : null,
+              claimed_parents: arr(e.claimed_parents).map(str),
+            }));
+          for (const ep of episodes) {
+            if (ep.admitted) ep.stage = "admitted";
+            if (!stageById.has(ep.stage)) {
+              const s = { id: ep.stage, label: ep.stage, sieve: false };
+              stages.push(s);
+              stageById.set(s.id, s);
+            }
+          }
+          const stops = stages.filter((s) => s.sieve && s.id !== "admitted");
+          const sieve = [...stops, stageById.get("admitted")];
+          const rank = new Map(sieve.map((s, i) => [s.id, i]));
+          const stopIndex = new Map(stops.map((s, i) => [s.id, i]));
+          const offSieve = stages.filter((s) => !s.sieve);
+
+          const gens = [
+            ...new Set([
+              ...arr(doc.generations)
+                .map(num)
+                .filter((g) => g !== null),
+              ...episodes.map((e) => e.generation),
+            ]),
+          ].sort((a, b) => a - b);
+          const genIndex = new Map(gens.map((g, i) => [g, i]));
+          episodes.sort(
+            (a, b) =>
+              genIndex.get(a.generation) - genIndex.get(b.generation) ||
+              a.episode_index - b.episode_index,
+          );
+          const byKey = new Map(episodes.map((e) => [e.key, e]));
+
+          const rules = arr(doc.rules)
+            .filter((r) => r && r.rule_id)
+            .map((r) => ({
+              ...r,
+              rule_id: str(r.rule_id),
+              revision: num(r.revision) ?? 0,
+              generation: num(r.generation) ?? 0,
+              episode_key: str(r.episode_key),
+              inputs: Array.isArray(r.inputs) ? r.inputs.map(str) : null,
+              parents: Array.isArray(r.parents) ? r.parents.map(str) : null,
+              stage2_gain: num(r.stage2_gain),
+            }))
+            .sort((a, b) => a.revision - b.revision);
+          for (const r of rules) {
+            if (!genIndex.has(r.generation)) {
+              gens.push(r.generation);
+              gens.sort((a, b) => a - b);
+              gens.forEach((g, i) => genIndex.set(g, i));
+            }
+          }
+          const ruleById = new Map(rules.map((r) => [r.rule_id, r]));
+          const ruleByEpisode = new Map(rules.map((r) => [r.episode_key, r]));
+          const ruleRank = new Map(rules.map((r, i) => [r.rule_id, i]));
+          const edges = arr(doc.edges)
+            .filter((e) => e && e.parent && e.child)
+            .map((e) => ({
+              parent: str(e.parent),
+              child: str(e.child),
+              kind: e.kind === "claimed" ? "claimed" : "trusted",
+            }));
+
+          const scored = episodes
+            .filter((e) => e.score && num(e.score.stage2_lower_bound) !== null)
+            .map((e, i) => ({ e, i }))
+            .sort(
+              (a, b) =>
+                (num(a.e.committed_at) ?? Infinity) - (num(b.e.committed_at) ?? Infinity) ||
+                a.i - b.i,
+            )
+            .map((x) => x.e);
+          const unscorable = episodes.filter(
+            (e) => e.score && num(e.score.stage2_lower_bound) === null,
+          ).length;
+
+          const inputsDoc = doc.inputs && typeof doc.inputs === "object" ? doc.inputs : {};
+          const descriptors = arr(inputsDoc.descriptors)
+            .filter((d) => d && d.name)
+            .map((d) => ({
+              name: str(d.name),
+              family: str(d.family),
+              unit: str(d.unit),
+              value_type: str(d.value_type),
+            }));
+          const descByName = new Map(descriptors.map((d) => [d.name, d]));
+          const groups = arr(inputsDoc.groups)
+            .filter((g) => g)
+            .map((g) => ({
+              id: str(g.id),
+              label: str(g.label ?? g.id),
+              inputs: arr(g.inputs).map(str),
+            }));
+          const placed = new Set(groups.flatMap((g) => g.inputs));
+          const extra = new Set(descriptors.map((d) => d.name).filter((n) => !placed.has(n)));
+          for (const e of episodes)
+            for (const n of e.inputs || []) if (!placed.has(n)) extra.add(n);
+          for (const r of rules) for (const n of r.inputs || []) if (!placed.has(n)) extra.add(n);
+          if (extra.size)
+            groups.push({
+              id: "__other",
+              label: "not in registry groups",
+              inputs: [...extra].sort(),
+            });
+
+          return {
+            doc,
+            stages,
+            stageById,
+            stops,
+            sieve,
+            rank,
+            stopIndex,
+            offSieve,
+            gens,
+            genIndex,
+            episodes,
+            byKey,
+            rules,
+            ruleById,
+            ruleByEpisode,
+            ruleRank,
+            edges,
+            scored,
+            unscorable,
+            descriptors,
+            descByName,
+            groups,
+            grouping: str(inputsDoc.grouping),
+            sources: doc.sources && typeof doc.sources === "object" ? doc.sources : {},
+          };
+        }
+
+        function injectColorTokens(model) {
+          const n = model.gens.length;
+          const m = model.stops.length;
+          const light = [];
+          const dark = [];
+          model.gens.forEach((g, i) => {
+            light.push(`--gen-${i}:${rampStep(GEN_LIGHT, i, n, 5)}`);
+            dark.push(`--gen-${i}:${rampStep(GEN_DARK, i, n, 5)}`);
+          });
+          model.stops.forEach((s, j) => {
+            light.push(`--stage-${j}:${rampStep(STAGE_LIGHT, j, m, 4)}`);
+            dark.push(`--stage-${j}:${rampStep(STAGE_DARK, j, m, 4)}`);
+          });
+          const style = document.createElement("style");
+          style.textContent =
+            `:root{${light.join(";")}}` +
+            `@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){${dark.join(";")}}}` +
+            `:root[data-theme="dark"]{${dark.join(";")}}`;
+          document.head.appendChild(style);
+        }
+
+        let model;
+        const state = {
+          gens: new Set(),
+          input: null,
+          rule: null,
+          episode: null,
+          showRejected: false,
+          notebookLimit: NOTEBOOK_PAGE,
+        };
+        const genVar = (g) => `var(--gen-${model.genIndex.get(g) ?? 0})`;
+        const genOn = (g) => state.gens.has(g);
+        function stageColor(id) {
+          if (id === "admitted") return "var(--good)";
+          if (model.stopIndex.has(id)) return `var(--stage-${model.stopIndex.get(id)})`;
+          return "url(#hatch)";
+        }
+        const stageLabel = (id) => (model.stageById.get(id) || { label: id }).label;
+        const isOffSieve = (id) => !model.rank.has(id);
+        const journalOnly = (e) => e.stage === "crash" || e.stage === "pending";
+        function causeOf(e) {
+          if (e.stop_cause) return str(e.stop_cause);
+          const j = journalOnly(e) && e.journal && typeof e.journal === "object" ? e.journal : {};
+          const found = [
+            j.termination_category === "success" ? null : j.termination_category,
+            j.budget_exhausted_kind,
+            j.error_category,
+          ].find((v) => typeof v === "string" && v);
+          return found || null;
+        }
+        const capSlot = (name) => {
+          const i = CAPABILITIES.indexOf(name);
+          return i >= 0 && i < CAT_SLOTS ? i + 1 : null;
+        };
+
+        const tip = document.getElementById("tip");
+        function placeTip(x, y) {
+          const pad = 12;
+          const w = tip.offsetWidth;
+          const h = tip.offsetHeight;
+          let left = x + 14;
+          let top = y + 14;
+          if (left + w + pad > window.innerWidth) left = Math.max(pad, x - w - 14);
+          if (top + h + pad > window.innerHeight) top = Math.max(pad, y - h - 14);
+          tip.style.left = `${left}px`;
+          tip.style.top = `${top}px`;
+        }
+        function showTip(content, x, y) {
+          fill(
+            tip,
+            el("div", { class: "tip-title", text: content.title }),
+            ...content.rows.map(([value, label]) =>
+              el(
+                "div",
+                { class: "tip-row" },
+                el("strong", { text: value }),
+                el("span", { text: label }),
+              ),
+            ),
+          );
+          tip.hidden = false;
+          placeTip(x, y);
+        }
+        const hideTip = () => {
+          tip.hidden = true;
+        };
+        let restoringFocus = false;
+        function keepFocus(render) {
+          const active = document.activeElement;
+          const key = active && active.dataset ? active.dataset.key : undefined;
+          render();
+          if (!key || (active.isConnected && document.activeElement === active)) return;
+          const next = document.querySelector(`[data-key="${CSS.escape(key)}"]`);
+          if (!next) return;
+          restoringFocus = true;
+          try {
+            next.focus({ preventScroll: true });
+          } finally {
+            restoringFocus = false;
+          }
+        }
+        const rovingMemory = new Map();
+        function rovingFocus(container, items, memoryKey) {
+          const index = new Map(items.map((node, i) => [node, i]));
+          const remembered = rovingMemory.get(memoryKey);
+          let current = items.find((node) => node.dataset.key === remembered) || items[0];
+          for (const node of items) node.setAttribute("tabindex", node === current ? 0 : -1);
+          container.addEventListener("focusin", (ev) => {
+            if (!index.has(ev.target) || ev.target === current) return;
+            current.setAttribute("tabindex", -1);
+            current = ev.target;
+            current.setAttribute("tabindex", 0);
+            rovingMemory.set(memoryKey, current.dataset.key);
+          });
+          container.addEventListener("keydown", (ev) => {
+            const i = index.get(ev.target);
+            if (i === undefined) return;
+            const last = items.length - 1;
+            const moves = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: last };
+            if (!(ev.key in moves)) return;
+            ev.preventDefault();
+            items[Math.max(0, Math.min(last, moves[ev.key]))].focus();
+          });
+        }
+        function bindTip(node, contentFn, onActivate) {
+          node.addEventListener("pointerenter", (ev) => {
+            if (ev.pointerType === "mouse" || ev.pointerType === "pen")
+              showTip(contentFn(), ev.clientX, ev.clientY);
+          });
+          node.addEventListener("pointermove", (ev) => {
+            if (!tip.hidden) placeTip(ev.clientX, ev.clientY);
+          });
+          node.addEventListener("pointerleave", hideTip);
+          node.addEventListener("focus", () => {
+            if (restoringFocus) return;
+            const r = node.getBoundingClientRect();
+            showTip(contentFn(), r.right, r.top + r.height / 2);
+          });
+          node.addEventListener("blur", hideTip);
+          if (onActivate) {
+            node.addEventListener("click", (ev) => {
+              ev.stopPropagation();
+              hideTip();
+              onActivate();
+            });
+            node.addEventListener("keydown", (ev) => {
+              if (ev.key === "Enter" || ev.key === " ") {
+                ev.preventDefault();
+                hideTip();
+                onActivate();
+              }
+            });
+          }
+        }
+
+        function emptyState(title, detail) {
+          return el(
+            "div",
+            { class: "empty", role: "status" },
+            el("strong", { text: title }),
+            detail || null,
+          );
+        }
+        function table(caption, headers, rows) {
+          return el(
+            "div",
+            { class: "table-wrap" },
+            el(
+              "table",
+              null,
+              el("caption", { text: caption }),
+              el(
+                "thead",
+                null,
+                el(
+                  "tr",
+                  null,
+                  headers.map((h) =>
+                    el("th", {
+                      scope: "col",
+                      class: h.n ? "n" : null,
+                      text: h.label,
+                    }),
+                  ),
+                ),
+              ),
+              el(
+                "tbody",
+                null,
+                rows.map((row) =>
+                  el(
+                    "tr",
+                    null,
+                    row.map((cell, i) =>
+                      el("td", {
+                        class:
+                          [
+                            headers[i].n ? "n" : headers[i].mono ? "mono" : "",
+                            headers[i].wide ? "wide" : "",
+                          ]
+                            .join(" ")
+                            .trim() || null,
+                        text: cell,
+                      }),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+        function legendItem(swatch, label) {
+          return el("span", { class: "item" }, swatch, el("span", { text: label }));
+        }
+        const swatch = (color, extra) =>
+          el("span", { class: "swatch", style: `background:${color};${extra || ""}` });
+        function lineKey(dash) {
+          return sv(
+            "svg",
+            { width: 22, height: 10, "aria-hidden": "true" },
+            sv("line", {
+              x1: 1,
+              y1: 5,
+              x2: 21,
+              y2: 5,
+              style: `stroke:var(--edge);stroke-width:1.5;${dash ? "stroke-dasharray:4 3;opacity:.7" : ""}`,
+            }),
+          );
+        }
+        function genLegend() {
+          return [
+            el("span", { class: "title", text: "Generation" }),
+            model.gens.map((g) =>
+              legendItem(
+                el("span", { class: "dot", style: `background:${genVar(g)}` }),
+                `Gen ${g}`,
+              ),
+            ),
+          ];
+        }
+        function stageRampLegend(title) {
+          if (!model.stops.length) return null;
+          return el(
+            "span",
+            { class: "item" },
+            el("span", { class: "title", text: title }),
+            el("span", { text: model.stops[0].label }),
+            el(
+              "span",
+              { class: "ramp" },
+              model.stops.map((s) => swatch(stageColor(s.id))),
+            ),
+            el("span", { text: model.stops[model.stops.length - 1].label }),
+          );
+        }
+        function checkIcon(cls) {
+          return sv(
+            "svg",
+            {
+              class: cls || "ico",
+              viewBox: "0 0 12 12",
+              width: 12,
+              height: 12,
+              "aria-hidden": "true",
+            },
+            sv("circle", { cx: 6, cy: 6, r: 6, style: "fill:var(--good)" }),
+            sv("path", {
+              d: "M3.2 6.2 5.1 8 8.8 4.2",
+              style:
+                "fill:none;stroke:#ffffff;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round",
+            }),
+          );
+        }
+        function stageBadge(id) {
+          if (id === "admitted") {
+            return el(
+              "span",
+              { class: "badge good" },
+              checkIcon(),
+              el("span", { text: stageLabel(id) }),
+            );
+          }
+          const icon = isOffSieve(id)
+            ? el("span", {
+                class: "ico",
+                style: "font-size:11px;line-height:12px;text-align:center",
+                text: offSieveGlyph(id),
+              })
+            : el("span", { class: "dot", style: `background:${stageColor(id)}` });
+          return el(
+            "span",
+            { class: "badge" },
+            icon,
+            el("span", { text: isOffSieve(id) ? stageLabel(id) : `Stopped: ${stageLabel(id)}` }),
+          );
+        }
+
+        const panels = {};
+        function makePanel(id, title, subtitle) {
+          const toggle = el("button", {
+            class: "btn",
+            type: "button",
+            "aria-pressed": "false",
+            text: "Table",
+          });
+          const chart = el("div", { class: "panel-body", "data-view": "chart" });
+          const tableBox = el("div", { class: "panel-body", "data-view": "table", hidden: true });
+          const legend = el("div", { class: "legend" });
+          const note = el("div", { class: "note", hidden: true });
+          const section = el(
+            "section",
+            { class: "panel", id: `panel-${id}`, "aria-labelledby": `h-${id}` },
+            el(
+              "div",
+              { class: "panel-head" },
+              el(
+                "div",
+                null,
+                el("h2", { id: `h-${id}`, text: title }),
+                el("p", { text: subtitle }),
+              ),
+              toggle,
+            ),
+            chart,
+            tableBox,
+            legend,
+            note,
+          );
+          toggle.addEventListener("click", () => {
+            const showTable = toggle.getAttribute("aria-pressed") !== "true";
+            toggle.setAttribute("aria-pressed", String(showTable));
+            toggle.textContent = showTable ? "Chart" : "Table";
+            chart.hidden = showTable;
+            legend.hidden = showTable;
+            tableBox.hidden = !showTable;
+            if (showTable) flushTable(panels[id]);
+          });
+          panels[id] = { section, chart, table: tableBox, legend, note, buildTable: null };
+          return section;
+        }
+        function setTable(panel, build) {
+          panel.buildTable = build;
+          if (!panel.table.hidden) flushTable(panel);
+        }
+        function flushTable(panel) {
+          const build = panel.buildTable;
+          panel.buildTable = null;
+          if (build) fill(panel.table, build());
+        }
+        function setNote(panel, text) {
+          panel.note.hidden = !text;
+          panel.note.textContent = text || "";
+        }
+        function keepScroll(container, fn) {
+          const scroller = container.querySelector(".scroller");
+          const left = scroller ? scroller.scrollLeft : 0;
+          fn();
+          const next = container.querySelector(".scroller");
+          if (next) next.scrollLeft = left;
+        }
+        const availWidth = (panel) =>
+          Math.max(240, panel.chart.clientWidth || panel.section.clientWidth - 32);
+
+        function buildPage() {
+          const doc = model.doc;
+          const src = model.sources;
+          const fields =
+            src.fields_not_recorded && typeof src.fields_not_recorded === "object"
+              ? src.fields_not_recorded
+              : {};
+          const gaps = [];
+          if (num(src.journal_only))
+            gaps.push(`${plural(src.journal_only, "episode")} with no outcome row (journal only)`);
+          if (num(src.missing_blobs))
+            gaps.push(
+              `${plural(src.missing_blobs, "blob")} missing or corrupt (scores unavailable)`,
+            );
+          const missingFields = Object.entries(fields)
+            .filter(([, v]) => num(v))
+            .map(
+              ([k, v]) =>
+                `${k} for ${plural(v, "episode")}${k === "inputs" ? " (recovered from expressions)" : ""}`,
+            );
+          if (missingFields.length)
+            gaps.push(`not recorded by this archive: ${missingFields.join(", ")}`);
+
+          const gensText = model.gens.length
+            ? `${plural(model.gens.length, "generation")} (${model.gens[0]}\u2013${model.gens[model.gens.length - 1]})`
+            : "no generations yet";
+          const runs = arr(doc.runs_available);
+          const themeBtn = el("button", { class: "btn", type: "button", id: "theme-toggle" });
+          const notebookBtn = el(
+            "button",
+            {
+              class: "btn",
+              type: "button",
+              id: "notebook-toggle",
+              "aria-expanded": "false",
+              "aria-controls": "drawer",
+            },
+            el("span", { text: "Lab notebook" }),
+            el("span", {
+              class: "count",
+              id: "notebook-count",
+              title: "admitted rules in this run",
+            }),
+          );
+          const header = el(
+            "header",
+            { class: "top" },
+            el(
+              "div",
+              null,
+              el("h1", null, "Run ", el("span", { text: str(doc.run_id) || "unknown" })),
+              el(
+                "p",
+                { class: "meta" },
+                el("span", { text: str(doc.task) || "task" }),
+                el("span", { text: gensText }),
+                el("span", { text: `archive revision ${num(doc.archive_revision) ?? "\u2013"}` }),
+                el("span", { text: `generated ${fmtIso(doc.generated_at)}` }),
+                runs.length > 1
+                  ? el("span", { text: `${runs.length} runs in this archive` })
+                  : null,
+              ),
+            ),
+            el("div", { class: "actions" }, themeBtn, notebookBtn),
+          );
+          const notice = gaps.length
+            ? el(
+                "p",
+                { class: "notice", role: "note" },
+                el("span", { class: "icon", "aria-hidden": "true", text: "!" }),
+                el("span", null, el("strong", { text: "Data gaps. " }), `${gaps.join("; ")}.`),
+              )
+            : null;
+          const chips = el("nav", {
+            class: "chips",
+            id: "chips",
+            "aria-label": "Generation filter",
+          });
+          const main = el(
+            "main",
+            null,
+            el(
+              "div",
+              { class: "row row-a" },
+              makePanel(
+                "coverage",
+                "Input coverage",
+                "One cell per input variable. Darker cells carry more stage-2 gain from admitted rules; blank cells are inputs no rule has used yet.",
+              ),
+              makePanel(
+                "lineage",
+                "Lineage",
+                "Admitted rules by archive revision (left to right) and generation (lanes). Lines join each rule to its assigned parents; the stub under a parent counts its rejected offspring by stopping stage.",
+              ),
+            ),
+            el(
+              "div",
+              { class: "row row-b" },
+              makePanel(
+                "rising",
+                "Rising bar",
+                "Every scored submission in order. Admission needs the stage-2 lower bound above 0; each whisker reaches up to the point estimate.",
+              ),
+              makePanel(
+                "process",
+                "Process fingerprint",
+                "How each generation spent its tool calls, how soon a feature first compiled, and how probes were used. Panels share scales.",
+              ),
+            ),
+            makePanel(
+              "sieve",
+              "Sieve barcode",
+              "One column per episode and one row per pipeline stage. Gray cells are stages passed, the coloured cell is where the episode stopped, and a green check marks admission.",
+            ),
+          );
+          const app = document.getElementById("app");
+          fill(app, header, notice, chips, main);
+          buildDrawer();
+          setupTheme(themeBtn);
+          notebookBtn.addEventListener("click", () =>
+            setDrawer(!document.body.classList.contains("drawer-open")),
+          );
+        }
+
+        function setupTheme(button) {
+          const root = document.documentElement;
+          const media = window.matchMedia
+            ? window.matchMedia("(prefers-color-scheme: dark)")
+            : null;
+          try {
+            const saved = window.localStorage.getItem(THEME_KEY);
+            if (saved === "light" || saved === "dark") root.dataset.theme = saved;
+          } catch (err) {
+            /* storage unavailable */
+          }
+          const effective = () => root.dataset.theme || (media && media.matches ? "dark" : "light");
+          const label = () => {
+            const next = effective() === "dark" ? "light" : "dark";
+            fill(
+              button,
+              el("span", { "aria-hidden": "true", text: next === "dark" ? "\u263e" : "\u2600" }),
+              el("span", { text: next === "dark" ? "Dark" : "Light" }),
+            );
+            button.setAttribute("aria-label", `Switch to ${next} theme`);
+          };
+          button.addEventListener("click", () => {
+            const next = effective() === "dark" ? "light" : "dark";
+            root.dataset.theme = next;
+            try {
+              window.localStorage.setItem(THEME_KEY, next);
+            } catch (err) {
+              /* storage unavailable */
+            }
+            label();
+          });
+          if (media && media.addEventListener) media.addEventListener("change", label);
+          label();
+        }
+
+        function renderChips() {
+          const chips = document.getElementById("chips");
+          const all = state.gens.size === model.gens.length;
+          const counts = new Map(model.gens.map((g) => [g, 0]));
+          for (const e of model.episodes)
+            counts.set(e.generation, (counts.get(e.generation) || 0) + 1);
+          const allChip = el("button", {
+            class: "chip",
+            type: "button",
+            "data-key": "gen:all",
+            "aria-pressed": String(all),
+            text: "All",
+          });
+          allChip.addEventListener("click", () => {
+            state.gens = new Set(model.gens);
+            renderAll();
+          });
+          const genChips = model.gens.map((g) => {
+            const chip = el(
+              "button",
+              {
+                class: "chip",
+                type: "button",
+                "data-key": `gen:${g}`,
+                "aria-pressed": String(!all && genOn(g)),
+              },
+              el("span", { class: "dot", style: `background:${genVar(g)}` }),
+              el("span", { text: `Gen ${g}` }),
+              el("span", { class: "n", text: counts.get(g) || 0 }),
+            );
+            chip.addEventListener("click", () => {
+              if (all) state.gens = new Set([g]);
+              else if (genOn(g)) state.gens.delete(g);
+              else state.gens.add(g);
+              if (!state.gens.size) state.gens = new Set(model.gens);
+              renderAll();
+            });
+            return chip;
+          });
+          const pill = state.input
+            ? el(
+                "span",
+                { class: "filter-pill" },
+                el("span", { text: "Input" }),
+                el("span", { class: "v", text: state.input }),
+                el("button", {
+                  type: "button",
+                  "aria-label": "Clear input filter",
+                  text: "\u00d7",
+                  on: { click: () => setInput(null) },
+                }),
+              )
+            : null;
+          fill(
+            chips,
+            el("span", { class: "label", text: "Generations" }),
+            el(
+              "div",
+              { class: "chip-row" },
+              allChip,
+              genChips,
+              model.gens.length ? null : el("span", { class: "label", text: "none yet" }),
+            ),
+            pill,
+          );
+        }
+
+        function setInput(name) {
+          state.input = name;
+          renderAll();
+        }
+        function toggleInput(name) {
+          if (state.input === name) {
+            setInput(null);
+            return;
+          }
+          state.input = name;
+          state.rule = null;
+          state.episode = null;
+          renderAll();
+          setDrawer(true);
+        }
+        function openRule(ruleId) {
+          state.rule = ruleId;
+          state.episode = null;
+          renderAll();
+          setDrawer(true);
+        }
+        function openEpisode(key) {
+          state.episode = key;
+          state.rule = null;
+          renderAll();
+          setDrawer(true);
+        }
+
+        function coverageStats() {
+          const stats = new Map();
+          const get = (n) => {
+            if (!stats.has(n)) stats.set(n, { gain: 0, rules: 0, rejected: 0, gainAll: 0 });
+            return stats.get(n);
+          };
+          for (const g of model.groups) for (const n of g.inputs) get(n);
+          for (const r of model.rules) {
+            for (const n of new Set(r.inputs || [])) {
+              const s = get(n);
+              s.gainAll += Math.max(0, r.stage2_gain ?? 0);
+              if (genOn(r.generation)) {
+                s.gain += Math.max(0, r.stage2_gain ?? 0);
+                s.rules += 1;
+              }
+            }
+          }
+          for (const e of model.episodes) {
+            if (e.admitted || !e.inputs || !genOn(e.generation)) continue;
+            for (const n of new Set(e.inputs)) get(n).rejected += 1;
+          }
+          let max = 0;
+          for (const s of stats.values()) max = Math.max(max, s.gainAll);
+          return { stats, max };
+        }
+        const seqBin = (v, max) =>
+          v <= 0 || max <= 0 ? 0 : Math.min(SEQ_BINS, Math.max(1, Math.ceil((v / max) * SEQ_BINS)));
+
+        function renderCoverage() {
+          const p = panels.coverage;
+          const { stats, max } = coverageStats();
+          const names = model.groups.flatMap((g) => g.inputs);
+          if (!names.length) {
+            fill(
+              p.chart,
+              emptyState(
+                "No input registry in this document",
+                "The extractor found no descriptors, so there is nothing to lay out.",
+              ),
+            );
+            fill(p.legend);
+            setTable(p, () => emptyState("No inputs"));
+            setNote(p, "");
+            return;
+          }
+          const blocks = model.groups
+            .filter((g) => g.inputs.length)
+            .map((g) =>
+              el(
+                "div",
+                { class: "cov-group" },
+                el(
+                  "div",
+                  { class: "cov-group-label" },
+                  el("b", { text: g.label }),
+                  ` \u00b7 ${g.inputs.length}`,
+                ),
+                el(
+                  "div",
+                  { class: "cov-cells" },
+                  g.inputs.map((name) => {
+                    const s = stats.get(name);
+                    const bin = seqBin(s.gain, max);
+                    const cls = [
+                      "cov-cell",
+                      bin || s.rules ? "" : s.rejected ? "rejected-only" : "untouched",
+                      state.input && state.input !== name ? "faded" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
+                    const cell = el(
+                      "button",
+                      {
+                        type: "button",
+                        class: cls,
+                        "data-key": `input:${name}`,
+                        "data-bin": bin || null,
+                        "aria-pressed": String(state.input === name),
+                        "aria-label": `${name}: ${plural(s.rules, "admitted rule")}, summed stage-2 gain ${fmt(s.gain)}, ${plural(s.rejected, "rejected episode")}`,
+                      },
+                      el("span", { class: "nm", text: breakable(name) }),
+                      el("span", {
+                        class: "ct",
+                        text: s.rules
+                          ? plural(s.rules, "rule")
+                          : s.rejected
+                            ? `0 rules \u00b7 ${s.rejected} rejected`
+                            : "untouched",
+                      }),
+                    );
+                    bindTip(
+                      cell,
+                      () => {
+                        const d = model.descByName.get(name);
+                        return {
+                          title: name,
+                          rows: [
+                            [fmt(s.gain), "summed stage-2 gain (admitted)"],
+                            [String(s.rules), "admitted rules"],
+                            [String(s.rejected), "rejected episodes using it"],
+                            ...(d
+                              ? [
+                                  [
+                                    d.unit || "\u2013",
+                                    d.family ? `unit \u00b7 family ${d.family}` : "unit",
+                                  ],
+                                ]
+                              : []),
+                          ],
+                        };
+                      },
+                      () => toggleInput(name),
+                    );
+                    return cell;
+                  }),
+                ),
+              ),
+            );
+          fill(p.chart, el("div", { class: "cov" }, blocks));
+          fill(
+            p.legend,
+            el(
+              "span",
+              { class: "item" },
+              el("span", { class: "title", text: "Summed stage-2 gain" }),
+              el("span", { class: "num", text: "0" }),
+              el(
+                "span",
+                { class: "ramp" },
+                Array.from({ length: SEQ_BINS }, (_, i) => swatch(`var(--seq-${i + 1})`)),
+              ),
+              el("span", { text: max > 0 ? fmt(max) : "no admitted gain yet" }),
+            ),
+            legendItem(
+              swatch("transparent", "border:1.5px dashed var(--muted)"),
+              "used only by rejected episodes",
+            ),
+            legendItem(swatch("transparent", "border:1px solid var(--grid)"), "untouched"),
+          );
+          const rejectedOnly = names.filter(
+            (n) => !stats.get(n).rules && stats.get(n).rejected,
+          ).length;
+          const untouched = names.filter(
+            (n) => !stats.get(n).rules && !stats.get(n).rejected,
+          ).length;
+          const admittedIn = model.rules.filter((r) => genOn(r.generation)).length;
+          setNote(
+            p,
+            admittedIn
+              ? `${names.length - rejectedOnly - untouched} of ${names.length} inputs used by admitted rules; ${rejectedOnly} only by rejected episodes; ${untouched} untouched.${state.input ? " Click the selected cell again or press Esc to clear." : ""}`
+              : "No admitted rules in the selected generations yet, so no cell is filled.",
+          );
+          setTable(p, () => [
+            table(
+              "Input coverage (selected generations)",
+              [
+                { label: "Group" },
+                { label: "Input", mono: true },
+                { label: "Unit" },
+                { label: "Admitted rules", n: true },
+                { label: "Summed stage-2 gain", n: true },
+                { label: "Rejected episodes", n: true },
+              ],
+              model.groups.flatMap((g) =>
+                g.inputs.map((n) => {
+                  const s = stats.get(n);
+                  const d = model.descByName.get(n);
+                  return [
+                    g.label,
+                    n,
+                    d ? d.unit : "",
+                    String(s.rules),
+                    fmt(s.gain),
+                    String(s.rejected),
+                  ];
+                }),
+              ),
+            ),
+          ]);
+        }
+
+        function lineageData() {
+          const trusted = new Set(
+            model.edges.filter((e) => e.kind === "trusted").map((e) => `${e.parent}|${e.child}`),
+          );
+          const solid = [];
+          const dashed = [];
+          const stubs = new Map();
+          let external = 0;
+          for (const e of model.edges) {
+            const parent = model.ruleById.get(e.parent);
+            if (!parent) {
+              if (e.kind === "trusted") external += 1;
+              continue;
+            }
+            const childRule = model.ruleByEpisode.get(e.child);
+            const child = model.byKey.get(e.child);
+            if (e.kind === "trusted") {
+              if (childRule) solid.push({ parent, child: childRule });
+              else if (child && !child.admitted && genOn(child.generation)) {
+                if (!stubs.has(parent.rule_id)) stubs.set(parent.rule_id, new Map());
+                const m = stubs.get(parent.rule_id);
+                m.set(child.stage, (m.get(child.stage) || 0) + 1);
+              }
+            } else if (childRule && !trusted.has(`${e.parent}|${e.child}`)) {
+              dashed.push({ parent, child: childRule });
+            }
+          }
+          return { solid, dashed, stubs, external };
+        }
+        function stubOrder(m) {
+          const order = [...model.stops.map((s) => s.id), ...model.offSieve.map((s) => s.id)];
+          return order.filter((id) => m.has(id)).map((id) => [id, m.get(id)]);
+        }
+
+        function renderLineage() {
+          const p = panels.lineage;
+          const rules = model.rules;
+          if (!rules.length) {
+            fill(
+              p.chart,
+              emptyState(
+                "No admitted rules yet",
+                "Nodes appear here once a rule passes both gates, is unique, and is admitted to the archive.",
+              ),
+            );
+            fill(p.legend);
+            setTable(p, () => emptyState("No admitted rules yet"));
+            setNote(p, "");
+            return;
+          }
+          const { solid, dashed, stubs, external } = lineageData();
+          const laneH = 88;
+          const nodeY = 34;
+          const left = 64;
+          const top = 28;
+          const spacing = 48;
+          const gains = rules.map((r) => Math.max(0, r.stage2_gain ?? 0));
+          const gmax = Math.max(...gains, 0);
+          const radius = (r) =>
+            gmax > 0 ? 4 + 10 * Math.sqrt(Math.max(0, r.stage2_gain ?? 0) / gmax) : 4;
+          const width = Math.max(availWidth(p), left + rules.length * spacing + 24);
+          const height = top + model.gens.length * laneH + 4;
+          const x = (r) => left + spacing / 2 + model.ruleRank.get(r.rule_id) * spacing;
+          const y = (r) => top + (model.genIndex.get(r.generation) ?? 0) * laneH + nodeY;
+          const active = (r) =>
+            genOn(r.generation) && (!state.input || (r.inputs || []).includes(state.input));
+          const svg = sv("svg", {
+            width,
+            height,
+            viewBox: `0 0 ${width} ${height}`,
+            role: "img",
+            "aria-label": `Lineage of ${plural(rules.length, "admitted rule")} across ${plural(model.gens.length, "generation")}`,
+          });
+          model.gens.forEach((g, i) => {
+            const y0 = top + i * laneH;
+            svg.append(sv("line", { class: "gridline", x1: 0, x2: width, y1: y0, y2: y0 }));
+            svg.append(sv("circle", { cx: 10, cy: y0 + nodeY, r: 4, style: `fill:${genVar(g)}` }));
+            svg.append(
+              sv("text", {
+                x: 20,
+                y: y0 + nodeY + 4,
+                class: genOn(g) ? "" : "muted",
+                text: `Gen ${g}`,
+              }),
+            );
+          });
+          svg.append(
+            sv("line", { class: "gridline", x1: 0, x2: width, y1: height - 4, y2: height - 4 }),
+          );
+          const labelEvery = Math.max(1, Math.ceil(32 / spacing));
+          rules.forEach((r, i) => {
+            if (i % labelEvery && i !== rules.length - 1) return;
+            svg.append(
+              sv("text", {
+                x: x(r),
+                y: 14,
+                "text-anchor": "middle",
+                class: "muted num",
+                text: `r${r.revision}`,
+              }),
+            );
+          });
+          const curve = (a, b) => {
+            const x1 = x(a),
+              y1 = y(a),
+              x2 = x(b),
+              y2 = y(b);
+            const dx = Math.max(16, (x2 - x1) / 2);
+            if (y1 === y2 && x2 - x1 > spacing * 1.5) {
+              const lift = Math.min(26, 6 + ((x2 - x1) / spacing) * 4);
+              return `M${x1} ${y1} C${x1 + dx / 2} ${y1 - lift} ${x2 - dx / 2} ${y2 - lift} ${x2} ${y2}`;
+            }
+            return `M${x1} ${y1} C${x1 + dx} ${y1} ${x2 - dx} ${y2} ${x2} ${y2}`;
+          };
+          const edgeLayer = sv("g", { "aria-hidden": "true" });
+          for (const e of dashed) {
+            edgeLayer.append(
+              sv("path", {
+                d: curve(e.parent, e.child),
+                class: active(e.child) ? "" : "dim",
+                style:
+                  "fill:none;stroke:var(--edge);stroke-width:1.25;stroke-dasharray:4 3;opacity:.55",
+              }),
+            );
+          }
+          for (const e of solid) {
+            const hl =
+              state.rule && (state.rule === e.child.rule_id || state.rule === e.parent.rule_id);
+            edgeLayer.append(
+              sv("path", {
+                d: curve(e.parent, e.child),
+                class: active(e.child) ? "" : "dim",
+                style: `fill:none;stroke:${hl ? "var(--text)" : "var(--edge)"};stroke-width:${hl ? 2 : 1.5};opacity:${hl ? 1 : 0.75};stroke-linecap:round`,
+              }),
+            );
+          }
+          svg.append(edgeLayer);
+          const stubTotal = (m) => [...m.values()].reduce((a, c) => a + c, 0);
+          const maxStub = Math.max(1, ...[...stubs.values()].map(stubTotal));
+          const unit = Math.min(4, (laneH - nodeY - 14 - 10) / maxStub);
+          for (const r of rules) {
+            const m = stubs.get(r.rule_id);
+            if (!m) continue;
+            const parts = stubOrder(m);
+            const total = stubTotal(m);
+            let yy = y(r) + radius(r) + 3;
+            const g = sv("g");
+            parts.forEach(([id, c], k) => {
+              const gap = k < parts.length - 1 ? 1 : 0;
+              const h = Math.max(1.5, c * unit - gap);
+              g.append(
+                sv("rect", {
+                  x: x(r) - 3,
+                  y: yy,
+                  width: 6,
+                  height: h,
+                  style: `fill:${stageColor(id)}`,
+                }),
+              );
+              yy += Math.max(c * unit, h + gap);
+            });
+            const hit = sv("rect", {
+              class: "hit",
+              x: x(r) - 8,
+              y: y(r) + radius(r) + 1,
+              width: 16,
+              height: Math.max(12, yy - y(r) - radius(r)),
+              rx: 3,
+            });
+            bindTip(hit, () => ({
+              title: `${plural(total, "rejected child", "rejected children")} of ${shortId(r.rule_id)}`,
+              rows: parts.map(([id, c]) => [String(c), `stopped at ${stageLabel(id)}`]),
+            }));
+            g.append(hit);
+            svg.append(g);
+          }
+          for (const r of rules) {
+            const rr = radius(r);
+            const on = active(r);
+            const g = sv("g", {
+              class: `node-g${on ? "" : " dim"}`,
+              tabindex: on ? 0 : -1,
+              role: "button",
+              "data-key": `rule:${r.rule_id}`,
+              "aria-label": `Rule ${shortId(r.rule_id)}, generation ${r.generation}, stage-2 gain ${fmt(r.stage2_gain)}`,
+            });
+            g.append(
+              sv("circle", { class: "node-hit", cx: x(r), cy: y(r), r: Math.max(12, rr + 5) }),
+            );
+            if (r.parents && r.parents.length === 0) {
+              g.append(
+                sv("circle", {
+                  cx: x(r),
+                  cy: y(r),
+                  r: rr + 4,
+                  style: "fill:none;stroke:var(--text-2);stroke-width:1.25",
+                }),
+              );
+            }
+            g.append(
+              sv("circle", {
+                cx: x(r),
+                cy: y(r),
+                r: rr,
+                style: `fill:${genVar(r.generation)};stroke:var(--surface);stroke-width:2`,
+              }),
+            );
+            if (state.rule === r.rule_id) {
+              g.append(
+                sv("circle", {
+                  cx: x(r),
+                  cy: y(r),
+                  r: rr + 3,
+                  style: "fill:none;stroke:var(--text);stroke-width:2",
+                }),
+              );
+            }
+            bindTip(
+              g,
+              () => ({
+                title: `Rule ${shortId(r.rule_id)}`,
+                rows: [
+                  [fmt(r.stage2_gain), "stage-2 gain"],
+                  [`Gen ${r.generation}`, `revision ${r.revision}`],
+                  [r.inputs ? r.inputs.join(", ") || "none" : "not recorded", "inputs"],
+                  [
+                    r.parents === null
+                      ? "not recorded"
+                      : r.parents.length
+                        ? r.parents.map(shortId).join(", ")
+                        : "seed (none)",
+                    "parents",
+                  ],
+                ],
+              }),
+              () => openRule(r.rule_id),
+            );
+            svg.append(g);
+          }
+          keepScroll(p.chart, () => fill(p.chart, el("div", { class: "scroller" }, svg)));
+          const sizeKey = sv(
+            "svg",
+            { width: 34, height: 18, "aria-hidden": "true" },
+            sv("circle", { cx: 5, cy: 9, r: 4, style: "fill:var(--muted)" }),
+            sv("circle", { cx: 22, cy: 9, r: 8, style: "fill:var(--muted)" }),
+          );
+          const ringKey = sv(
+            "svg",
+            { width: 18, height: 18, "aria-hidden": "true" },
+            sv("circle", {
+              cx: 9,
+              cy: 9,
+              r: 8,
+              style: "fill:none;stroke:var(--text-2);stroke-width:1.25",
+            }),
+            sv("circle", { cx: 9, cy: 9, r: 4, style: "fill:var(--muted)" }),
+          );
+          fill(
+            p.legend,
+            ...genLegend(),
+            legendItem(sizeKey, "size = stage-2 gain"),
+            legendItem(lineKey(false), "assigned parent"),
+            legendItem(lineKey(true), "claimed by the agent only"),
+            legendItem(ringKey, "seed rule (no parents)"),
+            stageRampLegend("Rejected offspring (stub length = count)"),
+          );
+          const notes = [];
+          if (external)
+            notes.push(
+              `${plural(external, "trusted edge")} point to rules outside this run and are not drawn.`,
+            );
+          const unrecorded = model.episodes.filter(
+            (e) => e.parents === null && !journalOnly(e),
+          ).length;
+          if (unrecorded)
+            notes.push(`Parents were not recorded for ${plural(unrecorded, "episode")}.`);
+          setNote(p, notes.join(" "));
+          setTable(p, () => [
+            table(
+              "Admitted rules (lineage)",
+              [
+                { label: "Revision", n: true },
+                { label: "Rule", mono: true },
+                { label: "Gen", n: true },
+                { label: "Stage-2 gain", n: true },
+                { label: "Inputs", mono: true, wide: true },
+                { label: "Parents", mono: true },
+                { label: "Rejected offspring (selected gens)", wide: true },
+              ],
+              rules.map((r) => {
+                const m = stubs.get(r.rule_id);
+                return [
+                  String(r.revision),
+                  shortId(r.rule_id),
+                  String(r.generation),
+                  fmt(r.stage2_gain),
+                  r.inputs ? r.inputs.join(", ") : "not recorded",
+                  r.parents === null
+                    ? "not recorded"
+                    : r.parents.length
+                      ? r.parents.map(shortId).join(", ")
+                      : "seed",
+                  m
+                    ? stubOrder(m)
+                        .map(([id, c]) => `${stageLabel(id)} ${c}`)
+                        .join(", ")
+                    : "\u2013",
+                ];
+              }),
+            ),
+          ]);
+        }
+
+        function niceTicks(lo, hi, count) {
+          const span = hi - lo || 1;
+          const raw = span / count;
+          const mag = 10 ** Math.floor(Math.log10(raw));
+          const step =
+            [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= count) || 10 * mag;
+          const out = [];
+          for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step)
+            out.push(Number(v.toPrecision(12)));
+          return out;
+        }
+
+        function renderRising() {
+          const p = panels.rising;
+          const pts = model.scored;
+          if (!pts.length) {
+            fill(
+              p.chart,
+              emptyState(
+                "No scored submissions yet",
+                "Dots appear once an episode's feature passes the guard and reaches the scorer.",
+              ),
+            );
+            fill(p.legend);
+            setTable(p, () => emptyState("No scored submissions yet"));
+            setNote(
+              p,
+              model.unscorable
+                ? `${plural(model.unscorable, "receipt")} lack stage-2 numbers.`
+                : "",
+            );
+            return;
+          }
+          const left = 56,
+            right = 104,
+            top = 34,
+            plotH = 220,
+            bottom = 34;
+          const pitch = 18;
+          const width = Math.max(availWidth(p), left + pts.length * pitch + right);
+          const plotW = width - left - right;
+          const step = Math.max(pitch, Math.min(40, plotW / pts.length));
+          const height = top + plotH + bottom;
+          const lbs = pts.map((e) => e.score.stage2_lower_bound);
+          const gains = pts.map((e) => num(e.score.stage2_gain) ?? e.score.stage2_lower_bound);
+          let lo = Math.min(0, ...lbs, ...gains);
+          let hi = Math.max(0, ...lbs, ...gains);
+          const padY = (hi - lo || 1) * 0.08;
+          lo -= padY;
+          hi += padY;
+          const ticks = niceTicks(lo, hi, 5);
+          lo = Math.min(lo, ticks[0]);
+          hi = Math.max(hi, ticks[ticks.length - 1]);
+          const yv = (v) => top + plotH - ((v - lo) / (hi - lo)) * plotH;
+          const xc = (i) => left + step * i + step / 2;
+          const cmax = Math.max(1, ...pts.map((e) => num(e.score.complexity) ?? 0));
+          const rc = (e) => 4 + 5 * Math.sqrt(Math.max(0, num(e.score.complexity) ?? 0) / cmax);
+          const svg = sv("svg", {
+            width,
+            height,
+            viewBox: `0 0 ${width} ${height}`,
+            role: "img",
+            "aria-label": `${plural(pts.length, "scored submission")} by stage-2 lower bound`,
+          });
+          const segs = [];
+          pts.forEach((e, i) => {
+            const rev = num(e.score.archive_revision);
+            const last = segs[segs.length - 1];
+            if (last && last.rev === rev) last.end = i + 1;
+            else segs.push({ start: i, end: i + 1, rev });
+          });
+          const fullLabels = segs.map(
+            (sg) => `archive: ${sg.rev === null ? "?" : plural(sg.rev, "rule")}`,
+          );
+          let fitEnd = -Infinity;
+          const compactBands = !segs.every((sg, k) => {
+            const bx = left + step * sg.start;
+            const w = fullLabels[k].length * 6.2;
+            const fits = bx >= fitEnd + 8 && bx + w <= width - right;
+            fitEnd = bx + 3 + w;
+            return fits;
+          });
+          if (compactBands) {
+            svg.append(
+              sv("text", {
+                x: left - 8,
+                y: top - 10,
+                "text-anchor": "end",
+                class: "muted",
+                text: "archive",
+              }),
+            );
+          }
+          let labelEnd = -Infinity;
+          segs.forEach((sg, k) => {
+            const bx = left + step * sg.start;
+            if (k % 2) {
+              svg.append(
+                sv("rect", {
+                  x: bx,
+                  y: top,
+                  width: step * (sg.end - sg.start),
+                  height: plotH,
+                  style: "fill:var(--band)",
+                }),
+              );
+            }
+            svg.append(
+              sv("line", {
+                x1: bx,
+                x2: bx,
+                y1: top - 6,
+                y2: top + plotH,
+                style: `stroke:var(--axis);stroke-width:1;opacity:${k ? 0.6 : 0}`,
+              }),
+            );
+            const text = compactBands ? (sg.rev === null ? "?" : String(sg.rev)) : fullLabels[k];
+            const w = text.length * 6.2;
+            if (bx >= labelEnd + 8 && bx + w <= width - right) {
+              svg.append(sv("text", { x: bx + 3, y: top - 10, class: "muted num", text }));
+              labelEnd = bx + 3 + w;
+            }
+          });
+          for (const t of ticks) {
+            svg.append(
+              sv("line", {
+                class: t === 0 ? "" : "gridline",
+                x1: left,
+                x2: width - right,
+                y1: yv(t),
+                y2: yv(t),
+              }),
+            );
+            svg.append(
+              sv("text", {
+                x: left - 8,
+                y: yv(t) + 4,
+                "text-anchor": "end",
+                class: "muted num",
+                text: fmt(t, 2),
+              }),
+            );
+          }
+          const y0 = yv(0);
+          svg.append(
+            sv("line", {
+              x1: left,
+              x2: width - right + 4,
+              y1: y0,
+              y2: y0,
+              style: "stroke:var(--text-2);stroke-width:1",
+            }),
+          );
+          const refText = "admission needs lower bound > 0";
+          const refY = Math.min(top + plotH - 14, Math.max(top + 4, y0 - 2));
+          svg.append(
+            sv(
+              "text",
+              { x: width - right + 8, y: refY, class: "halo" },
+              sv("tspan", { x: width - right + 8, text: "admission needs" }),
+              sv("tspan", { x: width - right + 8, dy: 13, text: "lower bound > 0" }),
+            ),
+          );
+          const scrolls = width > availWidth(p) + 1;
+          svg.append(
+            sv("line", {
+              class: "baseline",
+              x1: left,
+              x2: width - right,
+              y1: top + plotH,
+              y2: top + plotH,
+            }),
+          );
+          const tickEvery =
+            [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find((k) => k * step >= 28) || 1000;
+          pts.forEach((e, i) => {
+            const n = i + 1;
+            if (n % tickEvery && !(n === 1 && (tickEvery - 1) * step >= 28)) return;
+            svg.append(
+              sv("text", {
+                x: xc(i),
+                y: top + plotH + 16,
+                "text-anchor": "middle",
+                class: "muted num",
+                text: String(n),
+              }),
+            );
+          });
+          svg.append(
+            sv("text", { x: left, y: height - 4, class: "muted", text: "submission order \u2192" }),
+          );
+          const risingHits = [];
+          pts.forEach((e, i) => {
+            const s = e.score;
+            const on = genOn(e.generation);
+            const g = sv("g", { class: on ? "" : "dim" });
+            const color = genVar(e.generation);
+            const cx = xc(i);
+            const yl = yv(s.stage2_lower_bound);
+            const gain = num(s.stage2_gain);
+            if (gain !== null) {
+              g.append(
+                sv("line", {
+                  x1: cx,
+                  x2: cx,
+                  y1: yl,
+                  y2: yv(gain),
+                  style: `stroke:${color};stroke-width:1.5;stroke-linecap:round`,
+                }),
+              );
+            }
+            const r = rc(e);
+            if (s.signal_pass === false) {
+              const d = `M${cx - r * 0.75} ${yl - r * 0.75} L${cx + r * 0.75} ${yl + r * 0.75} M${cx + r * 0.75} ${yl - r * 0.75} L${cx - r * 0.75} ${yl + r * 0.75}`;
+              g.append(
+                sv("path", {
+                  d,
+                  style: "stroke:var(--surface);stroke-width:5;stroke-linecap:round",
+                }),
+              );
+              g.append(
+                sv("path", { d, style: `stroke:${color};stroke-width:2;stroke-linecap:round` }),
+              );
+            } else if (e.admitted) {
+              g.append(
+                sv("circle", {
+                  cx,
+                  cy: yl,
+                  r,
+                  style: `fill:${color};stroke:var(--surface);stroke-width:2`,
+                }),
+              );
+            } else {
+              g.append(sv("circle", { cx, cy: yl, r: r + 1, style: "fill:var(--surface)" }));
+              g.append(
+                sv("circle", {
+                  cx,
+                  cy: yl,
+                  r: r - 1,
+                  style: `fill:var(--surface);stroke:${color};stroke-width:2`,
+                }),
+              );
+            }
+            const hit = sv("rect", {
+              class: "hit",
+              x: left + step * i,
+              y: top,
+              width: step,
+              height: plotH,
+              tabindex: -1,
+              role: "button",
+              "data-key": `rising:${e.key}`,
+              "aria-label": `Submission ${i + 1}, ${e.key}, lower bound ${fmt(s.stage2_lower_bound)}`,
+            });
+            if (on) risingHits.push(hit);
+            bindTip(
+              hit,
+              () => ({
+                title: `${e.key} \u00b7 ${e.admitted ? "admitted" : `stopped at ${stageLabel(e.stage)}`}`,
+                rows: [
+                  [fmt(s.stage2_lower_bound), "stage-2 lower bound"],
+                  [fmt(s.stage2_gain), "stage-2 gain (point estimate)"],
+                  [fmt(s.complexity), "complexity"],
+                  [
+                    s.signal_pass === false ? "failed" : "passed",
+                    `signal (stage-1 gain ${fmt(s.stage1_gain)} vs ${fmt(s.stage1_threshold)})`,
+                  ],
+                  [`${num(s.archive_revision) ?? "?"}`, "rules in archive when scored"],
+                  [`Gen ${e.generation}`, `submission ${i + 1}`],
+                ],
+              }),
+              () => openEpisode(e.key),
+            );
+            g.append(hit);
+            svg.append(g);
+          });
+          if (risingHits.length) rovingFocus(svg, risingHits, "rising");
+          keepScroll(p.chart, () => fill(p.chart, el("div", { class: "scroller" }, svg)));
+          const mk = (kind) => {
+            const s = sv("svg", { width: 16, height: 16, "aria-hidden": "true" });
+            if (kind === "filled")
+              s.append(sv("circle", { cx: 8, cy: 8, r: 5, style: "fill:var(--muted)" }));
+            if (kind === "hollow")
+              s.append(
+                sv("circle", {
+                  cx: 8,
+                  cy: 8,
+                  r: 4.5,
+                  style: "fill:none;stroke:var(--muted);stroke-width:2",
+                }),
+              );
+            if (kind === "x")
+              s.append(
+                sv("path", {
+                  d: "M4 4 12 12 M12 4 4 12",
+                  style: "stroke:var(--muted);stroke-width:2;stroke-linecap:round",
+                }),
+              );
+            if (kind === "whisker") {
+              s.append(
+                sv("line", {
+                  x1: 8,
+                  x2: 8,
+                  y1: 2,
+                  y2: 12,
+                  style: "stroke:var(--muted);stroke-width:1.5",
+                }),
+              );
+              s.append(sv("circle", { cx: 8, cy: 12, r: 3, style: "fill:var(--muted)" }));
+            }
+            return s;
+          };
+          const sizeKey = sv(
+            "svg",
+            { width: 30, height: 18, "aria-hidden": "true" },
+            sv("circle", { cx: 5, cy: 9, r: 4, style: "fill:var(--muted)" }),
+            sv("circle", { cx: 21, cy: 9, r: 8, style: "fill:var(--muted)" }),
+          );
+          fill(
+            p.legend,
+            ...genLegend(),
+            legendItem(mk("filled"), "admitted"),
+            legendItem(mk("hollow"), "not admitted"),
+            legendItem(mk("x"), "signal failed"),
+            legendItem(mk("whisker"), "lower bound to point estimate"),
+            legendItem(sizeKey, "size = complexity"),
+            legendItem(
+              swatch("var(--band)", "border:1px solid var(--grid)"),
+              compactBands
+                ? "bands change with archive size (rules in the archive above each band)"
+                : "bands change with archive size",
+            ),
+            scrolls
+              ? legendItem(
+                  sv(
+                    "svg",
+                    { width: 22, height: 10, "aria-hidden": "true" },
+                    sv("line", {
+                      x1: 1,
+                      y1: 5,
+                      x2: 21,
+                      y2: 5,
+                      style: "stroke:var(--text-2);stroke-width:1",
+                    }),
+                  ),
+                  refText,
+                )
+              : null,
+          );
+          const notes = [];
+          if (model.unscorable)
+            notes.push(
+              `${plural(model.unscorable, "receipt")} lack stage-2 numbers and are not plotted.`,
+            );
+          const missing = num(model.sources.missing_blobs);
+          if (missing)
+            notes.push(
+              `${plural(missing, "blob")} could not be read, so some submissions may be missing.`,
+            );
+          setNote(p, notes.join(" "));
+          setTable(p, () => [
+            table(
+              "Scored submissions in order",
+              [
+                { label: "#", n: true },
+                { label: "Episode", mono: true },
+                { label: "Gen", n: true },
+                { label: "Lower bound", n: true },
+                { label: "Gain", n: true },
+                { label: "Complexity", n: true },
+                { label: "Signal" },
+                { label: "Admitted" },
+                { label: "Archive rules", n: true },
+              ],
+              pts
+                .map((e, i) => [e, i])
+                .filter(([e]) => genOn(e.generation))
+                .map(([e, i]) => [
+                  String(i + 1),
+                  e.key,
+                  String(e.generation),
+                  fmt(e.score.stage2_lower_bound),
+                  fmt(e.score.stage2_gain),
+                  fmt(e.score.complexity),
+                  e.score.signal_pass === false ? "failed" : "passed",
+                  e.admitted ? "yes" : "no",
+                  String(num(e.score.archive_revision) ?? "\u2013"),
+                ]),
+            ),
+          ]);
+        }
+
+        function processData() {
+          const per = new Map();
+          for (const g of model.gens) {
+            per.set(g, {
+              episodes: 0,
+              recorded: 0,
+              calls: new Map(),
+              first: new Array(9).fill(0),
+              probes: new Array(4).fill(0),
+              pcts: [],
+            });
+          }
+          const seen = new Set();
+          for (const e of model.episodes) {
+            const d = per.get(e.generation);
+            d.episodes += 1;
+            const pr = e.process;
+            if (!pr || typeof pr !== "object") continue;
+            d.recorded += 1;
+            for (const [k, v] of Object.entries(
+              pr.calls && typeof pr.calls === "object" ? pr.calls : {},
+            )) {
+              const c = num(v) ?? 0;
+              d.calls.set(k, (d.calls.get(k) || 0) + c);
+              if (c > 0) seen.add(k);
+            }
+            const f = num(pr.first_compile_success_attempt);
+            d.first[f === null ? 8 : Math.min(8, Math.max(1, Math.round(f))) - 1] += 1;
+            d.probes[Math.min(3, Math.max(0, Math.round(num(pr.probes) ?? 0)))] += 1;
+            for (const v of arr(pr.probe_percentiles)) if (num(v) !== null) d.pcts.push(v);
+          }
+          const known = CAPABILITIES.filter((c) => seen.has(c));
+          const others = [...seen].filter((c) => !CAPABILITIES.includes(c)).sort();
+          const order = [...known, ...others];
+          let firstMax = 1;
+          let probeMax = 1;
+          for (const d of per.values()) {
+            firstMax = Math.max(firstMax, ...d.first);
+            probeMax = Math.max(probeMax, ...d.probes);
+          }
+          return { per, order, firstMax, probeMax };
+        }
+        function colPath(x, y, w, h) {
+          if (h <= 0) return "";
+          const r = Math.min(4, w / 2, h);
+          return `M${x} ${y + h} V${y + r} Q${x} ${y} ${x + r} ${y} H${x + w - r} Q${x + w} ${y} ${x + w} ${y + r} V${y + h} Z`;
+        }
+        function histogram(counts, labels, max, neverLast, tipLabel, pitch) {
+          const colW = pitch - 4,
+            axisW = 22,
+            neverW = 34,
+            gap = 6,
+            h = 52,
+            top = 14,
+            base = top + h;
+          const regular = neverLast ? counts.length - 1 : counts.length;
+          const width = axisW + regular * pitch + (neverLast ? gap + neverW : 0);
+          const svg = sv("svg", { width, height: base + 18, role: "img", "aria-label": tipLabel });
+          svg.append(sv("line", { class: "gridline", x1: axisW, x2: width, y1: top, y2: top }));
+          svg.append(
+            sv("text", {
+              x: axisW - 6,
+              y: top + 4,
+              "text-anchor": "end",
+              class: "muted num",
+              text: String(max),
+            }),
+          );
+          svg.append(sv("line", { class: "baseline", x1: axisW, x2: width, y1: base, y2: base }));
+          counts.forEach((c, i) => {
+            const never = neverLast && i === counts.length - 1;
+            const x = never
+              ? axisW + regular * pitch + gap + (neverW - colW) / 2
+              : axisW + i * pitch + (pitch - colW) / 2;
+            const ch = (c / max) * h;
+            if (c > 0 && never) {
+              svg.append(
+                sv("path", {
+                  d: colPath(x + 0.75, base - ch + 0.75, colW - 1.5, ch - 0.75),
+                  style: "fill:none;stroke:var(--text-2);stroke-width:1.5",
+                }),
+              );
+            } else if (c > 0) {
+              svg.append(
+                sv("path", { d: colPath(x, base - ch, colW, ch), style: "fill:var(--text-2)" }),
+              );
+            }
+            svg.append(
+              sv("text", {
+                x: x + colW / 2,
+                y: base + 13,
+                "text-anchor": "middle",
+                class: "muted num",
+                text: labels[i],
+              }),
+            );
+            const hit = sv("rect", {
+              class: "hit",
+              x: x - 3,
+              y: top,
+              width: colW + 6,
+              height: h,
+              rx: 3,
+            });
+            bindTip(hit, () => ({
+              title: `${tipLabel}: ${labels[i]}`,
+              rows: [[String(c), plural(c, "episode").replace(/^\d+ /, "")]],
+            }));
+            svg.append(hit);
+          });
+          return svg;
+        }
+        function mixBar(d, order, width) {
+          const total = order.reduce((a, c) => a + (d.calls.get(c) || 0), 0);
+          const h = 26;
+          const svg = sv("svg", {
+            width,
+            height: h,
+            role: "img",
+            "aria-label": `Tool-call mix, ${total} calls`,
+          });
+          if (!total) {
+            svg.append(
+              sv("rect", { x: 0, y: 0, width, height: h, rx: 4, style: "fill:var(--track)" }),
+            );
+            svg.append(sv("text", { x: 8, y: 17, class: "muted", text: "no calls recorded" }));
+            return { svg, total };
+          }
+          const parts = [];
+          let other = 0;
+          const otherNames = [];
+          for (const c of order) {
+            const v = d.calls.get(c) || 0;
+            if (!v) continue;
+            const slot = capSlot(c);
+            if (slot) parts.push({ name: c, v, slot });
+            else {
+              other += v;
+              otherNames.push(c);
+            }
+          }
+          if (other) parts.push({ name: "Other", v: other, slot: "other", detail: otherNames });
+          const gap = 2;
+          const usable = width - gap * (parts.length - 1);
+          let xx = 0;
+          for (const part of parts) {
+            const w = Math.max(1, (part.v / total) * usable);
+            const g = sv("g");
+            g.append(
+              sv("rect", {
+                x: xx,
+                y: 0,
+                width: w,
+                height: h,
+                rx: Math.min(4, w / 2),
+                style: `fill:var(--cat-${part.slot})`,
+              }),
+            );
+            const label = pct(part.v / total);
+            if (w >= label.length * 6.5 + 8) {
+              g.append(
+                sv("text", {
+                  x: xx + 4,
+                  y: 17,
+                  class: "num",
+                  style: `fill:var(--cat-ink-${part.slot})`,
+                  text: label,
+                }),
+              );
+            }
+            const hit = sv("rect", { class: "hit", x: xx, y: 0, width: w, height: h });
+            bindTip(hit, () => ({
+              title: part.name === "Other" ? `Other (${part.detail.join(", ")})` : part.name,
+              rows: [
+                [String(part.v), "calls"],
+                [pct(part.v / total), "of this generation's calls"],
+              ],
+            }));
+            g.append(hit);
+            svg.append(g);
+            xx += w + gap;
+          }
+          return { svg, total };
+        }
+        function percentileStrip(values, width) {
+          const left = 4,
+            right = 4,
+            h = 16,
+            top = 2;
+          const svg = sv("svg", {
+            width,
+            height: top + h + 16,
+            role: "img",
+            "aria-label": `${values.length} probe percentiles`,
+          });
+          const x = (v) => left + (Math.max(0, Math.min(100, v)) / 100) * (width - left - right);
+          svg.append(
+            sv("line", {
+              class: "baseline",
+              x1: left,
+              x2: width - right,
+              y1: top + h,
+              y2: top + h,
+            }),
+          );
+          for (const v of values) {
+            svg.append(
+              sv("line", {
+                x1: x(v),
+                x2: x(v),
+                y1: top,
+                y2: top + h,
+                style: "stroke:var(--text-2);stroke-width:1.5;opacity:.75",
+              }),
+            );
+          }
+          [0, 50, 100].forEach((t, i) =>
+            svg.append(
+              sv("text", {
+                x: x(t),
+                y: top + h + 13,
+                "text-anchor": i === 0 ? "start" : i === 2 ? "end" : "middle",
+                class: "muted num",
+                text: String(t),
+              }),
+            ),
+          );
+          if (!values.length)
+            svg.append(
+              sv("text", {
+                x: width / 2,
+                y: top + 12,
+                "text-anchor": "middle",
+                class: "muted",
+                text: "no probes",
+              }),
+            );
+          return svg;
+        }
+
+        function renderProcess() {
+          const p = panels.process;
+          const { per, order, firstMax, probeMax } = processData();
+          const anyRecorded = [...per.values()].some((d) => d.recorded);
+          if (!model.episodes.length || !anyRecorded) {
+            fill(
+              p.chart,
+              model.episodes.length
+                ? emptyState(
+                    "No process data recorded",
+                    "This archive predates per-episode process counts, so there is nothing to compare yet.",
+                  )
+                : emptyState(
+                    "No episodes yet",
+                    "Panels appear once the first episode of a generation is committed.",
+                  ),
+            );
+            fill(p.legend);
+            setTable(p, () => emptyState("No process data"));
+            setNote(p, "");
+            return;
+          }
+          const gens = model.gens.filter(genOn);
+          const inner = 182;
+          const cards = gens.map((g) => {
+            const d = per.get(g);
+            const mix = mixBar(d, order, inner);
+            const card = el(
+              "div",
+              { class: "pf-panel" },
+              el(
+                "h3",
+                null,
+                el("span", { class: "dot", style: `background:${genVar(g)}` }),
+                `Gen ${g}`,
+              ),
+              el("div", {
+                class: "sub",
+                text: `${plural(d.episodes, "episode")} \u00b7 ${d.recorded} recorded`,
+              }),
+              el("div", { class: "sec", text: "Tool-call mix" }),
+              mix.svg,
+              el("div", {
+                class: "sub",
+                text: d.recorded
+                  ? `${mix.total} calls \u00b7 ${fmt(mix.total / d.recorded)} per episode`
+                  : "no calls recorded",
+              }),
+              el("div", { class: "sec", text: "First successful compile (attempt)" }),
+              histogram(
+                d.first,
+                ["1", "2", "3", "4", "5", "6", "7", "8", "never"],
+                firstMax,
+                true,
+                "First compile success",
+                15,
+              ),
+              el("div", { class: "sec", text: "Probes used" }),
+              histogram(d.probes, ["0", "1", "2", "3"], probeMax, false, "Probes used", 24),
+              el("div", { class: "sec", text: `Probe percentiles (${d.pcts.length})` }),
+              percentileStrip(d.pcts, inner),
+              d.episodes - d.recorded
+                ? el("div", { class: "foot", text: `${d.episodes - d.recorded} not recorded` })
+                : null,
+            );
+            return card;
+          });
+          keepScroll(p.chart, () =>
+            fill(p.chart, el("div", { class: "scroller" }, el("div", { class: "pf" }, cards))),
+          );
+          const legendNames = [];
+          let hasOther = false;
+          for (const c of order) {
+            if (capSlot(c)) legendNames.push(c);
+            else hasOther = true;
+          }
+          fill(
+            p.legend,
+            el("span", { class: "title", text: "Tool calls" }),
+            legendNames.map((c) => legendItem(swatch(`var(--cat-${capSlot(c)})`), c)),
+            hasOther ? legendItem(swatch("var(--cat-other)"), "Other") : null,
+            el("span", { class: "title", text: "Histograms" }),
+            legendItem(swatch("var(--text-2)"), "episodes"),
+            legendItem(swatch("transparent", "border:1.5px solid var(--text-2)"), "never compiled"),
+          );
+          const otherNames = order.filter((c) => !capSlot(c));
+          setNote(p, otherNames.length ? `Other: ${otherNames.join(", ")}.` : "");
+          const firstLabels = ["1", "2", "3", "4", "5", "6", "7", "8", "never"];
+          setTable(p, () => [
+            table(
+              "Tool calls per generation (summed)",
+              [
+                { label: "Gen", n: true },
+                { label: "Episodes", n: true },
+                { label: "Recorded", n: true },
+                ...order.map((c) => ({ label: c, n: true })),
+              ],
+              gens.map((g) => {
+                const d = per.get(g);
+                return [
+                  String(g),
+                  String(d.episodes),
+                  String(d.recorded),
+                  ...order.map((c) => String(d.calls.get(c) || 0)),
+                ];
+              }),
+            ),
+            el("div", { style: "height:12px" }),
+            table(
+              "Episodes by attempt of first successful compile, and by probes used",
+              [
+                { label: "Gen", n: true },
+                ...firstLabels.map((l) => ({
+                  label: l === "never" ? "never" : `first@${l}`,
+                  n: true,
+                })),
+                ...[0, 1, 2, 3].map((k) => ({ label: `${k} probes`, n: true })),
+              ],
+              gens.map((g) => {
+                const d = per.get(g);
+                return [String(g), ...d.first.map(String), ...d.probes.map(String)];
+              }),
+            ),
+            el("div", { style: "height:12px" }),
+            table(
+              "Probe percentiles, in call order",
+              [
+                { label: "Gen", n: true },
+                { label: "Count", n: true },
+                { label: "Percentiles", wide: true },
+              ],
+              gens.map((g) => {
+                const d = per.get(g);
+                return [
+                  String(g),
+                  String(d.pcts.length),
+                  d.pcts.map((v) => fmt(v)).join(", ") || "\u2013",
+                ];
+              }),
+            ),
+          ]);
+        }
+
+        function renderSieve() {
+          const p = panels.sieve;
+          if (!model.episodes.length) {
+            fill(
+              p.chart,
+              emptyState("No episodes yet", "Columns appear as episodes are committed."),
+            );
+            fill(p.legend);
+            setTable(p, () => emptyState("No episodes yet"));
+            setNote(p, "");
+            return;
+          }
+          const rows = model.sieve.length;
+          const rowH = 13,
+            cellH = 11,
+            pitch = 10,
+            colW = 8,
+            iconH = 14;
+          const height = iconH + rows * rowH;
+          const gens = model.gens.filter(genOn);
+          const byGen = new Map(
+            gens.map((g) => [g, model.episodes.filter((e) => e.generation === g)]),
+          );
+          const maxN = Math.max(1, ...[...byGen.values()].map((l) => l.length));
+          const labelW = 92;
+          const sumW = 56;
+          const midW = maxN * pitch + 8;
+          const rowY = (k) => iconH + (rows - 1 - k) * rowH;
+          const blocks = gens.map((g) => {
+            const eps = byGen.get(g);
+            const labels = sv("svg", { width: labelW, height, "aria-hidden": "true" });
+            const strip = sv("svg", {
+              width: midW,
+              height,
+              role: "img",
+              "aria-label": `Generation ${g}: one column per episode; arrow keys move between episodes`,
+            });
+            const sums = sv("svg", { width: sumW, height, "aria-hidden": "true" });
+            model.sieve.forEach((st, k) => {
+              labels.append(
+                sv("text", {
+                  x: labelW - 8,
+                  y: rowY(k) + cellH - 1.5,
+                  "text-anchor": "end",
+                  text: st.label,
+                }),
+              );
+            });
+            const cells = new Map();
+            const cell = (color, x, y, w, h) => {
+              if (!cells.has(color)) cells.set(color, []);
+              cells.get(color).push(`M${x} ${y}h${w}v${h}h${-w}z`);
+            };
+            const checks = [];
+            const marks = [];
+            const hits = eps.map((e, i) => {
+              const x = i * pitch;
+              const off = isOffSieve(e.stage);
+              const sr = off ? -1 : model.rank.get(e.stage);
+              if (off) {
+                cell("url(#hatch)", x, rowY(rows - 1), colW, rows * rowH - 2);
+                marks.push(
+                  sv("text", {
+                    x: x + colW / 2,
+                    y: 10,
+                    "text-anchor": "middle",
+                    class: "strong",
+                    style: "font-size:10px",
+                    text: offSieveGlyph(e.stage),
+                  }),
+                );
+              } else {
+                for (let k = 0; k < rows; k++) {
+                  let fillColor = "var(--track)";
+                  if (k < sr) fillColor = "var(--passed)";
+                  else if (k === sr) fillColor = stageColor(e.stage);
+                  cell(fillColor, x, rowY(k), colW, cellH);
+                }
+                if (e.admitted) checks.push(`M${x + 1} 5.5l2.5 2.5l4 -4.5`);
+              }
+              const hit = sv("rect", {
+                class: "hit",
+                x: x - 1,
+                y: 0,
+                width: pitch,
+                height,
+                role: "button",
+                "data-key": `sieve:${e.key}`,
+                "aria-label": `${e.key}: ${stageLabel(e.stage)}`,
+              });
+              bindTip(
+                hit,
+                () => ({
+                  title: e.key,
+                  rows: [
+                    [
+                      stageLabel(e.stage),
+                      e.admitted ? "admitted" : off ? "off-sieve state" : "stopped at",
+                    ],
+                    [causeOf(e) ? causeOf(e).replace(/_/g, " ") : "\u2013", "stop cause"],
+                    [fmtTime(e.committed_at), "committed"],
+                  ],
+                }),
+                () => openEpisode(e.key),
+              );
+              return hit;
+            });
+            for (const [color, parts] of cells)
+              strip.append(sv("path", { d: parts.join(""), style: `fill:${color}` }));
+            if (checks.length)
+              strip.append(
+                sv("path", {
+                  d: checks.join(""),
+                  style:
+                    "fill:none;stroke:var(--good);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round",
+                }),
+              );
+            strip.append(...marks, ...hits);
+            if (hits.length) rovingFocus(strip, hits, `sieve:${g}`);
+            sums.append(
+              sv("text", {
+                x: sumW - 2,
+                y: 10,
+                "text-anchor": "end",
+                class: "muted",
+                text: "reached",
+              }),
+            );
+            model.sieve.forEach((st, k) => {
+              const reached = eps.filter(
+                (e) => !isOffSieve(e.stage) && model.rank.get(e.stage) >= k,
+              ).length;
+              sums.append(
+                sv("text", {
+                  x: sumW - 2,
+                  y: rowY(k) + cellH - 1.5,
+                  "text-anchor": "end",
+                  class: k === rows - 1 ? "strong num" : "num",
+                  text: eps.length ? pct(reached / eps.length) : "\u2013",
+                }),
+              );
+            });
+            const admittedN = eps.filter((e) => e.admitted).length;
+            const offN = eps.filter((e) => isOffSieve(e.stage)).length;
+            return el(
+              "div",
+              { class: "sieve-gen" },
+              el(
+                "div",
+                { class: "sieve-head" },
+                el("span", { class: "dot", style: `background:${genVar(g)}` }),
+                el("b", { text: `Gen ${g}` }),
+                el("span", {
+                  text: `${plural(eps.length, "episode")} \u00b7 ${admittedN} admitted${offN ? ` \u00b7 ${offN} off-sieve` : ""}`,
+                }),
+              ),
+              el("div", { class: "sieve" }, labels, el("div", { class: "scroller" }, strip), sums),
+            );
+          });
+          const scrollers = p.chart.querySelectorAll(".scroller");
+          const left = scrollers.length ? scrollers[0].scrollLeft : 0;
+          fill(p.chart, gens.length ? blocks : emptyState("No generation selected"));
+          const next = [...p.chart.querySelectorAll(".scroller")];
+          next.forEach((sc) => {
+            sc.scrollLeft = left;
+            sc.addEventListener("scroll", () => {
+              for (const other of next)
+                if (other !== sc && other.scrollLeft !== sc.scrollLeft)
+                  other.scrollLeft = sc.scrollLeft;
+            });
+          });
+          const offItems = model.offSieve
+            .filter((s) => model.episodes.some((e) => e.stage === s.id))
+            .map((s) =>
+              legendItem(
+                sv(
+                  "svg",
+                  { width: 12, height: 14, "aria-hidden": "true" },
+                  sv("rect", { y: 1, width: 12, height: 12, rx: 2, style: "fill:url(#hatch)" }),
+                  sv("text", {
+                    x: 6,
+                    y: 11,
+                    "text-anchor": "middle",
+                    class: "strong halo",
+                    style: "font-size:10px",
+                    text: offSieveGlyph(s.id),
+                  }),
+                ),
+                s.label,
+              ),
+            );
+          fill(
+            p.legend,
+            legendItem(swatch("var(--passed)"), "stage passed"),
+            stageRampLegend("Stopped at"),
+            legendItem(checkIcon(), "admitted"),
+            legendItem(swatch("var(--track)"), "not reached"),
+            offItems.length ? el("span", { class: "title", text: "Off-sieve" }) : null,
+            offItems,
+          );
+          setNote(
+            p,
+            "Percentages on the right: share of all episodes in the generation known to reach each stage (stopped there or later). Off-sieve episodes count as not reaching any stage.",
+          );
+          const headers = [
+            { label: "Gen", n: true },
+            { label: "Episodes", n: true },
+            ...model.sieve.map((s) => ({ label: `\u2265 ${s.label}`, n: true })),
+            ...model.offSieve.map((s) => ({ label: s.label, n: true })),
+          ];
+          setTable(p, () => [
+            table(
+              "Episodes reaching each stage, per generation",
+              headers,
+              gens.map((g) => {
+                const eps = byGen.get(g);
+                return [
+                  String(g),
+                  String(eps.length),
+                  ...model.sieve.map((s, k) => {
+                    const n = eps.filter(
+                      (e) => !isOffSieve(e.stage) && model.rank.get(e.stage) >= k,
+                    ).length;
+                    return `${n} (${eps.length ? pct(n / eps.length) : "\u2013"})`;
+                  }),
+                  ...model.offSieve.map((s) => String(eps.filter((e) => e.stage === s.id).length)),
+                ];
+              }),
+            ),
+            el("div", { style: "height:12px" }),
+            table(
+              "Every episode",
+              [
+                { label: "Episode", mono: true },
+                { label: "Gen", n: true },
+                { label: "Index", n: true },
+                { label: "Stage" },
+                { label: "Stop cause" },
+                { label: "Committed" },
+              ],
+              gens
+                .flatMap((g) => byGen.get(g))
+                .map((e) => [
+                  e.key,
+                  String(e.generation),
+                  String(e.episode_index),
+                  stageLabel(e.stage),
+                  causeOf(e) || "\u2013",
+                  fmtTime(e.committed_at),
+                ]),
+            ),
+          ]);
+        }
+
+        let drawerParts;
+        function buildDrawer() {
+          const drawer = document.getElementById("drawer");
+          const close = el("button", {
+            class: "btn",
+            type: "button",
+            "aria-label": "Close notebook",
+            text: "\u00d7",
+          });
+          close.addEventListener("click", () => setDrawer(false));
+          const rejected = el("input", { type: "checkbox", id: "show-rejected" });
+          rejected.addEventListener("change", () => {
+            state.showRejected = rejected.checked;
+            state.notebookLimit = NOTEBOOK_PAGE;
+            renderNotebook();
+          });
+          const filters = el("div", { class: "drawer-tools" });
+          const count = el("div", { class: "note" });
+          const list = el("div", { class: "drawer-list" });
+          fill(
+            drawer,
+            el(
+              "div",
+              { class: "drawer-head" },
+              el("div", { class: "drawer-title" }, el("h2", { text: "Lab notebook" }), close),
+              el(
+                "div",
+                { class: "drawer-tools" },
+                el("label", { for: "show-rejected" }, rejected, "Show rejected episodes"),
+              ),
+              filters,
+              count,
+            ),
+            list,
+          );
+          drawerParts = { drawer, filters, count, list, rejected };
+        }
+        function setDrawer(open) {
+          document.body.classList.toggle("drawer-open", open);
+          drawerParts.drawer.setAttribute("aria-hidden", String(!open));
+          const btn = document.getElementById("notebook-toggle");
+          if (btn) btn.setAttribute("aria-expanded", String(open));
+        }
+        function notebookEntries() {
+          const admitted = model.rules.map((r) => ({
+            rule: r,
+            ep: model.byKey.get(r.episode_key) || null,
+          }));
+          let entries;
+          if (state.showRejected || state.episode) {
+            const extra = model.episodes
+              .filter(
+                (e) =>
+                  !e.admitted &&
+                  (e.rule_id || e.record) &&
+                  (state.showRejected || e.key === state.episode),
+              )
+              .map((e) => ({ rule: null, ep: e }));
+            entries = [...admitted, ...extra];
+          } else entries = admitted;
+          if (state.episode && !entries.some((x) => x.ep && x.ep.key === state.episode)) {
+            const ep = model.byKey.get(state.episode);
+            if (ep) entries.push({ rule: null, ep });
+          }
+          const when = (x) => num(x.ep && x.ep.committed_at) ?? -Infinity;
+          const rev = (x) => (x.rule ? x.rule.revision : -Infinity);
+          entries.sort((a, b) => when(b) - when(a) || rev(b) - rev(a));
+          return entries.filter((x) => {
+            const gen = x.rule ? x.rule.generation : x.ep.generation;
+            const inputs = (x.rule && x.rule.inputs) || (x.ep && x.ep.inputs) || [];
+            const id = x.rule ? x.rule.rule_id : x.ep.rule_id;
+            if (state.episode) return x.ep && x.ep.key === state.episode;
+            if (state.rule) return id === state.rule;
+            if (!genOn(gen)) return false;
+            if (state.input && !inputs.includes(state.input)) return false;
+            return true;
+          });
+        }
+        function idButton(id) {
+          const known = model.ruleById.has(id);
+          if (!known) return el("span", { class: "idtext", title: id, text: shortId(id) });
+          const b = el("button", { class: "idlink", type: "button", title: id, text: shortId(id) });
+          b.addEventListener("click", () => openRule(id));
+          return b;
+        }
+        function card(x) {
+          const ep = x.ep;
+          const rule = x.rule;
+          const rec = ep && ep.record && typeof ep.record === "object" ? ep.record : null;
+          const stage = rule ? "admitted" : ep.stage;
+          const ruleId = rule ? rule.rule_id : ep.rule_id;
+          const score = ep && ep.score ? ep.score : null;
+          const inputs = (rule && rule.inputs) || (ep && ep.inputs);
+          const parents = rule ? rule.parents : ep.parents;
+          const gen = rule ? rule.generation : ep.generation;
+          const focus =
+            (state.rule && state.rule === ruleId) ||
+            (state.episode && ep && state.episode === ep.key);
+          const head = el(
+            "div",
+            { class: "card-head" },
+            stageBadge(stage),
+            el(
+              "span",
+              null,
+              el("span", {
+                class: "dot",
+                style: `background:${genVar(gen)};margin-right:5px;vertical-align:-1px`,
+              }),
+              `Gen ${gen}`,
+            ),
+            ruleId
+              ? el("span", { class: "mono", title: ruleId, text: `rule ${shortId(ruleId)}` })
+              : null,
+            rule ? el("span", { text: `revision ${rule.revision}` }) : null,
+            ep ? el("span", { class: "mono", text: ep.key }) : null,
+          );
+          const body = [];
+          if (rec && rec.hypothesis)
+            body.push(el("p", { class: "hyp", text: str(rec.hypothesis) }));
+          else
+            body.push(
+              el("p", {
+                class: "hyp",
+                style: "color:var(--text-2)",
+                text: "No public hypothesis record for this episode.",
+              }),
+            );
+          if (ep && ep.rewrite)
+            body.push(
+              el(
+                "div",
+                { class: "rewrite" },
+                el("span", { class: "k", text: "Plain-language rewrite" }),
+                str(ep.rewrite),
+              ),
+            );
+          if (rec && rec.expression)
+            body.push(el("pre", { class: "expr", text: str(rec.expression) }));
+          if (inputs && inputs.length) {
+            body.push(
+              el(
+                "div",
+                { class: "inchips" },
+                inputs.map((n) => {
+                  const b = el("button", {
+                    class: "inchip",
+                    type: "button",
+                    "aria-pressed": String(state.input === n),
+                    text: n,
+                  });
+                  b.addEventListener("click", () => toggleInput(n));
+                  return b;
+                }),
+              ),
+            );
+          } else if (inputs === null && ep && !journalOnly(ep)) {
+            body.push(el("div", { class: "metrics", text: "Inputs not recorded." }));
+          }
+          const gain = score ? num(score.stage2_gain) : rule ? rule.stage2_gain : null;
+          const metrics = [];
+          if (gain !== null)
+            metrics.push(el("span", null, "stage-2 gain ", el("b", { text: fmt(gain) })));
+          if (score) {
+            metrics.push(
+              el("span", null, "lower bound ", el("b", { text: fmt(score.stage2_lower_bound) })),
+            );
+            metrics.push(el("span", null, "complexity ", el("b", { text: fmt(score.complexity) })));
+          }
+          const cause = ep ? causeOf(ep) : null;
+          if (cause)
+            metrics.push(
+              el("span", null, "stop cause ", el("b", { text: cause.replace(/_/g, " ") })),
+            );
+          if (metrics.length) body.push(el("div", { class: "metrics" }, metrics));
+          if (parents !== undefined && ep && !journalOnly(ep)) {
+            body.push(
+              el(
+                "div",
+                { class: "parents" },
+                el("span", { text: "Parents" }),
+                parents === null
+                  ? el("span", { text: "not recorded" })
+                  : parents.length
+                    ? parents.map(idButton)
+                    : el("span", { text: "seed rule (none assigned)" }),
+              ),
+            );
+          }
+          const claimed = ep ? ep.claimed_parents : [];
+          if (claimed.length) {
+            body.push(
+              el(
+                "div",
+                { class: "parents" },
+                el("span", { text: "Claimed by the agent" }),
+                claimed.map(idButton),
+              ),
+            );
+          }
+          if (rec) {
+            const fields = [
+              ["rationale", "Rationale"],
+              ["applicability", "Applicability"],
+              ["uncertainty", "Uncertainty"],
+              ["discriminating_test", "Discriminating test"],
+            ].filter(([k]) => rec[k] !== null && rec[k] !== undefined && rec[k] !== "");
+            if (fields.length) {
+              body.push(
+                el(
+                  "details",
+                  null,
+                  el("summary", { text: "Rationale and tests" }),
+                  fields.map(([k, label]) =>
+                    el(
+                      "div",
+                      { class: "field" },
+                      el("span", { class: "k", text: label }),
+                      k === "uncertainty"
+                        ? el("code", {
+                            style: "font-family:var(--mono);font-size:12px",
+                            text: str(rec[k]),
+                          })
+                        : str(rec[k]),
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
+          return el("article", { class: `card${focus ? " focus" : ""}` }, head, body);
+        }
+        function renderNotebook() {
+          if (!drawerParts) return;
+          const { filters, count, list, rejected } = drawerParts;
+          rejected.checked = state.showRejected;
+          const pills = [];
+          const pill = (label, value, clear) =>
+            el(
+              "span",
+              { class: "filter-pill" },
+              el("span", { text: label }),
+              el("span", { class: "v", text: value }),
+              el("button", {
+                type: "button",
+                "aria-label": `Clear ${label.toLowerCase()} filter`,
+                text: "\u00d7",
+                on: { click: clear },
+              }),
+            );
+          if (state.rule)
+            pills.push(
+              pill("Rule", shortId(state.rule), () => {
+                state.rule = null;
+                renderAll();
+              }),
+            );
+          if (state.episode)
+            pills.push(
+              pill("Episode", state.episode, () => {
+                state.episode = null;
+                renderAll();
+              }),
+            );
+          if (state.input) pills.push(pill("Input", state.input, () => setInput(null)));
+          if (state.gens.size !== model.gens.length)
+            pills.push(
+              pill("Generations", [...state.gens].sort((a, b) => a - b).join(", "), () => {
+                state.gens = new Set(model.gens);
+                renderAll();
+              }),
+            );
+          fill(filters, ...pills);
+          filters.hidden = !pills.length;
+          const entries = notebookEntries();
+          const nb = document.getElementById("notebook-count");
+          if (nb) nb.textContent = String(model.rules.length);
+          const shown = entries.slice(0, state.notebookLimit);
+          const nAdmitted = entries.filter((x) => x.rule).length;
+          const nOther = entries.length - nAdmitted;
+          const parts = [];
+          if (nAdmitted || !nOther) parts.push(plural(nAdmitted, "admitted rule"));
+          if (nOther) parts.push(plural(nOther, "episode not admitted", "episodes not admitted"));
+          count.textContent = `${parts.join(" + ")}, newest first${shown.length < entries.length ? ` \u00b7 showing ${shown.length}` : ""}`;
+          if (!entries.length) {
+            fill(
+              list,
+              emptyState(
+                model.rules.length || state.showRejected
+                  ? "No entries match these filters"
+                  : "No admitted rules yet",
+                model.rules.length || state.showRejected
+                  ? "Clear a filter above to see more."
+                  : "Tick \u201cShow rejected episodes\u201d to read the hypotheses that did not make it.",
+              ),
+            );
+            return;
+          }
+          const rest = entries.length - shown.length;
+          let more = null;
+          if (rest) {
+            more = el("button", {
+              class: "btn",
+              type: "button",
+              "data-key": "notebook-more",
+              text: `Show ${Math.min(NOTEBOOK_PAGE, rest)} more (${rest} not shown)`,
+            });
+            more.addEventListener("click", () => {
+              state.notebookLimit += NOTEBOOK_PAGE;
+              keepFocus(renderNotebook);
+            });
+          }
+          fill(list, ...shown.map(card), more);
+        }
+
+        let renderedGens = null;
+        function renderAll() {
+          keepFocus(() => {
+            hideTip();
+            state.notebookLimit = NOTEBOOK_PAGE;
+            const gens = [...state.gens].sort((a, b) => a - b).join(",");
+            renderChips();
+            renderCoverage();
+            renderLineage();
+            if (gens !== renderedGens) {
+              renderRising();
+              renderProcess();
+              renderSieve();
+              renderedGens = gens;
+            }
+            renderNotebook();
+          });
+        }
+        let resizeTimer = 0;
+        function scheduleRender() {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(() => {
+            renderLineage();
+            renderRising();
+          }, 120);
+        }
+
+        function start(doc) {
+          if (!doc || typeof doc !== "object") throw new Error("viz data is not an object");
+          model = buildModel(doc);
+          state.gens = new Set(model.gens);
+          injectColorTokens(model);
+          if (doc.run_id) document.title = `Run ${str(doc.run_id)}`;
+          buildPage();
+          renderAll();
+          const main = document.querySelector("main");
+          let lastWidth = main.clientWidth;
+          const onResize = () => {
+            if (main.clientWidth === lastWidth) return;
+            lastWidth = main.clientWidth;
+            scheduleRender();
+          };
+          if (window.ResizeObserver) new ResizeObserver(onResize).observe(main);
+          else window.addEventListener("resize", onResize);
+          document.addEventListener("keydown", (ev) => {
+            if (ev.key !== "Escape") return;
+            if (!tip.hidden) {
+              hideTip();
+              return;
+            }
+            if (state.input) {
+              setInput(null);
+              return;
+            }
+            if (state.rule || state.episode) {
+              state.rule = null;
+              state.episode = null;
+              renderAll();
+              return;
+            }
+            if (document.body.classList.contains("drawer-open")) setDrawer(false);
+          });
+          document.getElementById("app").dataset.ready = "true";
+        }
+
+        loadDocument()
+          .then(start)
+          .catch((err) => {
+            const app = document.getElementById("app");
+            fill(
+              app,
+              el(
+                "div",
+                { class: "empty", role: "alert" },
+                el("strong", { text: "Could not load the run data" }),
+                el("span", { text: str(err && err.message ? err.message : err) }),
+              ),
+            );
+            app.dataset.ready = "error";
+          });
+      })();
+    </script>
+  </body>
+</html>
